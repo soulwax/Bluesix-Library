@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { MissingDatabaseEnvironmentError } from "@/lib/env"
-import { deleteResource, ResourceNotFoundError, updateResource } from "@/lib/resource-repository"
+import { ResourceNotFoundError } from "@/lib/resource-repository"
+import {
+  deleteResourceService,
+  updateResourceService,
+} from "@/lib/resource-service"
 import { parseResourceInput } from "@/lib/resource-validation"
 
 export const runtime = "nodejs"
@@ -24,10 +27,6 @@ function handleRouteError(error: unknown) {
       },
       { status: 400 }
     )
-  }
-
-  if (error instanceof MissingDatabaseEnvironmentError) {
-    return errorResponse(error.message, 500)
   }
 
   if (error instanceof ResourceNotFoundError) {
@@ -61,9 +60,9 @@ export async function PUT(request: Request, context: RouteContext) {
     const resourceId = await parseResourceId(context)
     const payload = await readRequestJson(request)
     const input = parseResourceInput(payload)
-    const resource = await updateResource(resourceId, input)
+    const { mode, resource } = await updateResourceService(resourceId, input)
 
-    return NextResponse.json({ resource })
+    return NextResponse.json({ mode, resource })
   } catch (error) {
     return handleRouteError(error)
   }
@@ -72,9 +71,9 @@ export async function PUT(request: Request, context: RouteContext) {
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const resourceId = await parseResourceId(context)
-    await deleteResource(resourceId)
+    const { mode } = await deleteResourceService(resourceId)
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ mode, ok: true })
   } catch (error) {
     return handleRouteError(error)
   }

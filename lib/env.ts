@@ -14,14 +14,18 @@ export class MissingDatabaseEnvironmentError extends Error {
   }
 }
 
+export function hasDatabaseEnv(): boolean {
+  return REQUIRED_DATABASE_ENV.every((key) => {
+    const value = process.env[key]
+    return value !== undefined && value.trim().length > 0
+  })
+}
+
 export function getDatabaseEnv(): {
   DATABASE_URL: string
   DATABASE_URL_UNPOOLED: string
 } {
-  const missing = REQUIRED_DATABASE_ENV.filter((key) => {
-    const value = process.env[key]
-    return value === undefined || value.trim().length === 0
-  })
+  const missing = REQUIRED_DATABASE_ENV.filter((key) => !process.env[key]?.trim())
 
   if (missing.length > 0) {
     throw new MissingDatabaseEnvironmentError([...missing])

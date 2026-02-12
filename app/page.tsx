@@ -20,13 +20,16 @@ import { Toaster, toast } from "sonner"
 
 interface ApiErrorResponse {
   error?: string
+  mode?: "database" | "mock"
 }
 
 interface ListResourcesResponse extends ApiErrorResponse {
+  mode?: "database" | "mock"
   resources?: ResourceCard[]
 }
 
 interface ResourceResponse extends ApiErrorResponse {
+  mode?: "database" | "mock"
   resource?: ResourceCard
 }
 
@@ -53,6 +56,7 @@ export default function Page() {
     null
   )
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [dataMode, setDataMode] = useState<"database" | "mock">("mock")
 
   const resourceCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -108,6 +112,7 @@ export default function Page() {
       }
 
       setResources(payload?.resources ?? [])
+      setDataMode(payload?.mode === "database" ? "database" : "mock")
     } catch (error) {
       setLoadError(
         error instanceof Error
@@ -147,6 +152,9 @@ export default function Page() {
         }
 
         const savedResource = payload.resource
+        if (payload.mode) {
+          setDataMode(payload.mode)
+        }
 
         setResources((prev) => {
           if (!isEditing) {
@@ -189,6 +197,10 @@ export default function Page() {
 
       if (!response.ok) {
         throw new Error(payload?.error ?? "Failed to delete resource.")
+      }
+
+      if (payload?.mode) {
+        setDataMode(payload.mode)
       }
 
       setResources((prev) => prev.filter((resource) => resource.id !== resourceId))
@@ -242,6 +254,7 @@ export default function Page() {
             </h1>
             <p className="text-xs text-muted-foreground">
               {resources.length} cards &middot; {totalLinks} links
+              {dataMode === "mock" ? " · mock mode" : ""}
             </p>
           </div>
         </div>

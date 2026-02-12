@@ -1,19 +1,20 @@
 import "server-only"
 
 import { neon } from "@neondatabase/serverless"
+import type { NeonQueryFunction } from "@neondatabase/serverless"
 
 import { getDatabaseEnv } from "@/lib/env"
 
-let sqlClient: ReturnType<typeof neon> | null = null
+let sqlClient: NeonQueryFunction<false, false> | null = null
 let schemaReady: Promise<void> | null = null
 
-function getSql() {
+function getSql(): NeonQueryFunction<false, false> {
   if (sqlClient !== null) {
     return sqlClient
   }
 
   const { DATABASE_URL } = getDatabaseEnv()
-  sqlClient = neon(DATABASE_URL)
+  sqlClient = neon<false, false>(DATABASE_URL)
   return sqlClient
 }
 

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { MissingDatabaseEnvironmentError } from "@/lib/env"
-import { createResource, listResources, ResourceNotFoundError } from "@/lib/resource-repository"
+import { ResourceNotFoundError } from "@/lib/resource-repository"
+import {
+  createResourceService,
+  listResourcesService,
+} from "@/lib/resource-service"
 import { parseResourceInput } from "@/lib/resource-validation"
 
 export const runtime = "nodejs"
@@ -20,10 +23,6 @@ function handleRouteError(error: unknown) {
       },
       { status: 400 }
     )
-  }
-
-  if (error instanceof MissingDatabaseEnvironmentError) {
-    return errorResponse(error.message, 500)
   }
 
   if (error instanceof ResourceNotFoundError) {
@@ -49,8 +48,8 @@ async function readRequestJson(request: Request): Promise<unknown> {
 
 export async function GET() {
   try {
-    const resources = await listResources()
-    return NextResponse.json({ resources })
+    const { mode, resources } = await listResourcesService()
+    return NextResponse.json({ mode, resources })
   } catch (error) {
     return handleRouteError(error)
   }
@@ -60,9 +59,9 @@ export async function POST(request: Request) {
   try {
     const payload = await readRequestJson(request)
     const input = parseResourceInput(payload)
-    const resource = await createResource(input)
+    const { mode, resource } = await createResourceService(input)
 
-    return NextResponse.json({ resource }, { status: 201 })
+    return NextResponse.json({ mode, resource }, { status: 201 })
   } catch (error) {
     return handleRouteError(error)
   }

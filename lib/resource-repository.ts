@@ -46,7 +46,7 @@ export async function listResources(): Promise<ResourceCard[]> {
   await ensureSchema()
   const sql = getSql()
 
-  const rows = await sql<ResourceRow[]>`
+  const rows = (await sql`
     SELECT
       rc.id,
       rc.category,
@@ -66,7 +66,7 @@ export async function listResources(): Promise<ResourceCard[]> {
     LEFT JOIN resource_links rl ON rc.id = rl.resource_id
     GROUP BY rc.id, rc.category, rc.created_at
     ORDER BY rc.created_at DESC
-  `
+  `) as ResourceRow[]
 
   return rows.map(normalizeRow)
 }
@@ -77,7 +77,7 @@ export async function createResource(input: ResourceInput): Promise<ResourceCard
 
   const linksJson = JSON.stringify(toDbWriteLinks(input.links))
 
-  const rows = await sql<ResourceWriteRow[]>`
+  const rows = (await sql`
     WITH new_card AS (
       INSERT INTO resource_cards (category)
       VALUES (${input.category})
@@ -114,7 +114,7 @@ export async function createResource(input: ResourceInput): Promise<ResourceCard
     FROM new_card nc
     LEFT JOIN inserted_links il ON TRUE
     GROUP BY nc.id, nc.category
-  `
+  `) as ResourceWriteRow[]
 
   return normalizeRow(rows[0])
 }
@@ -128,7 +128,7 @@ export async function updateResource(
 
   const linksJson = JSON.stringify(toDbWriteLinks(input.links))
 
-  const rows = await sql<ResourceWriteRow[]>`
+  const rows = (await sql`
     WITH updated_card AS (
       UPDATE resource_cards
       SET category = ${input.category}, updated_at = NOW()
@@ -170,7 +170,7 @@ export async function updateResource(
     FROM updated_card uc
     LEFT JOIN inserted_links il ON TRUE
     GROUP BY uc.id, uc.category
-  `
+  `) as ResourceWriteRow[]
 
   if (rows.length === 0) {
     throw new ResourceNotFoundError(id)
@@ -183,11 +183,11 @@ export async function deleteResource(id: string): Promise<void> {
   await ensureSchema()
   const sql = getSql()
 
-  const rows = await sql<{ id: string }[]>`
+  const rows = (await sql`
     DELETE FROM resource_cards
     WHERE id = ${id}::uuid
     RETURNING id
-  `
+  `) as { id: string }[]
 
   if (rows.length === 0) {
     throw new ResourceNotFoundError(id)
