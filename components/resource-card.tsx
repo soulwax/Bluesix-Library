@@ -51,12 +51,12 @@ export function ResourceCardItem({ resource, onDelete, onEdit }: ResourceCardPro
 
       <ul className="flex flex-col gap-2.5" role="list">
         {resource.links.map((link) => (
-          <li key={link.id}>
+          <li key={link.id} className="flex items-start gap-1 rounded-md p-1.5 -mx-1.5 transition-colors hover:bg-secondary group/row">
             <a
               href={link.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="group/link flex items-start gap-2 rounded-md p-1.5 -mx-1.5 transition-colors hover:bg-secondary"
+              className="group/link flex items-start gap-2 min-w-0 flex-1"
             >
               <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground group-hover/link:text-primary" />
               <div className="min-w-0 flex-1">
@@ -70,6 +70,18 @@ export function ResourceCardItem({ resource, onDelete, onEdit }: ResourceCardPro
                 )}
               </div>
             </a>
+            <button
+              type="button"
+              onClick={() => handleCopy(link.id, link.url)}
+              className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-all hover:text-primary group-hover/row:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label={`Copy link for ${link.label}`}
+            >
+              {copiedId === link.id ? (
+                <Check className="h-3.5 w-3.5 text-green-400" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+            </button>
           </li>
         ))}
       </ul>
