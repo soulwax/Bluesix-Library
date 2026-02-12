@@ -1,15 +1,16 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { CATEGORIES } from "@/lib/seed-data"
-import type { ResourceCard, ResourceLink } from "@/lib/seed-data"
+import { useCallback, useMemo, useState } from "react"
+
+import { CATEGORIES } from "@/lib/resources"
+import type { ResourceCard, ResourceInput } from "@/lib/resources"
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -25,8 +26,9 @@ interface LinkInput {
 interface AddResourceModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (resource: ResourceCard) => void
+  onSave: (resource: ResourceInput) => Promise<void>
   editingResource?: ResourceCard | null
+  isSaving?: boolean
 }
 
 const EDITABLE_CATEGORIES = CATEGORIES.filter((c) => c !== "All")
@@ -36,6 +38,7 @@ export function AddResourceModal({
   onOpenChange,
   onSave,
   editingResource,
+  isSaving = false,
 }: AddResourceModalProps) {
   const [category, setCategory] = useState("")
   const [customCategory, setCustomCategory] = useState("")
@@ -50,31 +53,37 @@ export function AddResourceModal({
   }, [])
 
   const initFromEditing = useCallback(() => {
-    if (editingResource) {
-      const cat = editingResource.category
-      if (EDITABLE_CATEGORIES.includes(cat as (typeof EDITABLE_CATEGORIES)[number])) {
-        setCategory(cat)
-        setCustomCategory("")
-      } else {
-        setCategory("__custom__")
-        setCustomCategory(cat)
-      }
-      setLinks(
-        editingResource.links.map((l) => ({
-          url: l.url,
-          label: l.label,
-          note: l.note ?? "",
-        }))
-      )
-    } else {
+    if (!editingResource) {
       resetForm()
+      return
     }
+
+    if (
+      EDITABLE_CATEGORIES.includes(
+        editingResource.category as (typeof EDITABLE_CATEGORIES)[number]
+      )
+    ) {
+      setCategory(editingResource.category)
+      setCustomCategory("")
+    } else {
+      setCategory("__custom__")
+      setCustomCategory(editingResource.category)
+    }
+
+    setLinks(
+      editingResource.links.map((link) => ({
+        url: link.url,
+        label: link.label,
+        note: link.note ?? "",
+      }))
+    )
   }, [editingResource, resetForm])
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
       initFromEditing()
     }
+
     onOpenChange(nextOpen)
   }
 
@@ -88,33 +97,35 @@ export function AddResourceModal({
 
   const updateLink = (index: number, field: keyof LinkInput, value: string) => {
     setLinks((prev) =>
-      prev.map((l, i) => (i === index ? { ...l, [field]: value } : l))
+      prev.map((link, i) => (i === index ? { ...link, [field]: value } : link))
     )
   }
 
-  const resolvedCategory = category === "__custom__" ? customCategory.trim() : category
-  const validLinks = links.filter((l) => l.url.trim() && l.label.trim())
-  const canSave = resolvedCategory.length > 0 && validLinks.length > 0
+  const resolvedCategory =
+    category === "__custom__" ? customCategory.trim() : category
 
-  const handleSave = () => {
-    if (!canSave) return
+  const validLinks = useMemo(
+    () => links.filter((link) => link.url.trim() && link.label.trim()),
+    [links]
+  )
 
-    const newLinks: ResourceLink[] = validLinks.map((l, i) => ({
-      id: `link-${Date.now()}-${i}`,
-      url: l.url.trim(),
-      label: l.label.trim(),
-      note: l.note.trim() || undefined,
-    }))
+  const canSave = resolvedCategory.trim().length > 0 && validLinks.length > 0
 
-    const resource: ResourceCard = {
-      id: editingResource?.id ?? `res-${Date.now()}`,
-      category: resolvedCategory,
-      links: newLinks,
+  const handleSave = async () => {
+    if (!canSave || isSaving) {
+      return
     }
 
-    onSave(resource)
-    onOpenChange(false)
-    resetForm()
+    const resource: ResourceInput = {
+      category: resolvedCategory.trim(),
+      links: validLinks.map((link) => ({
+        url: link.url.trim(),
+        label: link.label.trim(),
+        note: link.note.trim() || undefined,
+      })),
+    }
+
+    await onSave(resource)
   }
 
   return (
@@ -137,7 +148,7 @@ export function AddResourceModal({
             <select
               id="category-select"
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(event) => setCategory(event.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <option value="">Select a category...</option>
@@ -148,11 +159,12 @@ export function AddResourceModal({
               ))}
               <option value="__custom__">+ Custom category</option>
             </select>
+
             {category === "__custom__" && (
               <Input
                 placeholder="Enter custom category name..."
                 value={customCategory}
-                onChange={(e) => setCustomCategory(e.target.value)}
+                onChange={(event) => setCustomCategory(event.target.value)}
                 autoFocus
               />
             )}
@@ -167,6 +179,7 @@ export function AddResourceModal({
                 size="sm"
                 onClick={addLink}
                 className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
+                disabled={isSaving}
               >
                 <Plus className="h-3 w-3" />
                 Add link
@@ -184,24 +197,36 @@ export function AddResourceModal({
                     onClick={() => removeLink(index)}
                     className="absolute right-2 top-2 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label={`Remove link ${index + 1}`}
+                    disabled={isSaving}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
+
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex flex-col gap-1">
-                    <Label htmlFor={`link-label-${index}`} className="text-xs text-muted-foreground">
+                    <Label
+                      htmlFor={`link-label-${index}`}
+                      className="text-xs text-muted-foreground"
+                    >
                       Label
                     </Label>
                     <Input
                       id={`link-label-${index}`}
                       placeholder="e.g. cppreference"
                       value={link.label}
-                      onChange={(e) => updateLink(index, "label", e.target.value)}
+                      onChange={(event) =>
+                        updateLink(index, "label", event.target.value)
+                      }
+                      disabled={isSaving}
                     />
                   </div>
+
                   <div className="flex flex-col gap-1">
-                    <Label htmlFor={`link-url-${index}`} className="text-xs text-muted-foreground">
+                    <Label
+                      htmlFor={`link-url-${index}`}
+                      className="text-xs text-muted-foreground"
+                    >
                       URL
                     </Label>
                     <Input
@@ -209,19 +234,29 @@ export function AddResourceModal({
                       type="url"
                       placeholder="https://..."
                       value={link.url}
-                      onChange={(e) => updateLink(index, "url", e.target.value)}
+                      onChange={(event) =>
+                        updateLink(index, "url", event.target.value)
+                      }
+                      disabled={isSaving}
                     />
                   </div>
                 </div>
+
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor={`link-note-${index}`} className="text-xs text-muted-foreground">
+                  <Label
+                    htmlFor={`link-note-${index}`}
+                    className="text-xs text-muted-foreground"
+                  >
                     Note (optional)
                   </Label>
                   <Input
                     id={`link-note-${index}`}
                     placeholder="Short description..."
                     value={link.note}
-                    onChange={(e) => updateLink(index, "note", e.target.value)}
+                    onChange={(event) =>
+                      updateLink(index, "note", event.target.value)
+                    }
+                    disabled={isSaving}
                   />
                 </div>
               </div>
@@ -230,14 +265,17 @@ export function AddResourceModal({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!canSave}>
-            {editingResource ? "Update" : "Save"}
+          <Button onClick={handleSave} disabled={!canSave || isSaving}>
+            {isSaving
+              ? editingResource
+                ? "Updating..."
+                : "Saving..."
+              : editingResource
+                ? "Update"
+                : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

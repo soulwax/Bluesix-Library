@@ -1,0 +1,34 @@
+import "server-only"
+
+const REQUIRED_DATABASE_ENV = [
+  "DATABASE_URL",
+  "DATABASE_URL_UNPOOLED",
+] as const
+
+export class MissingDatabaseEnvironmentError extends Error {
+  constructor(missingKeys: string[]) {
+    super(
+      `Missing required database environment variables: ${missingKeys.join(", ")}`
+    )
+    this.name = "MissingDatabaseEnvironmentError"
+  }
+}
+
+export function getDatabaseEnv(): {
+  DATABASE_URL: string
+  DATABASE_URL_UNPOOLED: string
+} {
+  const missing = REQUIRED_DATABASE_ENV.filter((key) => {
+    const value = process.env[key]
+    return value === undefined || value.trim().length === 0
+  })
+
+  if (missing.length > 0) {
+    throw new MissingDatabaseEnvironmentError([...missing])
+  }
+
+  return {
+    DATABASE_URL: process.env.DATABASE_URL!.trim(),
+    DATABASE_URL_UNPOOLED: process.env.DATABASE_URL_UNPOOLED!.trim(),
+  }
+}

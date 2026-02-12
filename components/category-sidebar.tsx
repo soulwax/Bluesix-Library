@@ -1,8 +1,8 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import type { Category } from "@/lib/seed-data"
-import { CATEGORIES } from "@/lib/seed-data"
+import type { Category } from "@/lib/resources"
+import { CATEGORIES } from "@/lib/resources"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Globe, Code2, Cpu, Gamepad2, Sigma, Network, Server, Database, ShieldCheck, Layers } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
