@@ -108,6 +108,11 @@ export async function ensureSchema() {
 
     await sql`
       ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ
+    `
+
+    await sql`
+      ALTER TABLE app_users
       ALTER COLUMN password_hash DROP NOT NULL
     `
 
@@ -120,6 +125,32 @@ export async function ensureSchema() {
       CREATE UNIQUE INDEX IF NOT EXISTS app_users_single_first_admin_idx
       ON app_users (is_first_admin)
       WHERE is_first_admin = true
+    `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS email_verification_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL CHECK (char_length(token_hash) = 64),
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS email_verification_tokens_user_id_idx
+      ON email_verification_tokens (user_id)
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS email_verification_tokens_expires_at_idx
+      ON email_verification_tokens (expires_at DESC)
+    `
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS email_verification_tokens_token_hash_idx
+      ON email_verification_tokens (token_hash)
     `
 
     await sql`

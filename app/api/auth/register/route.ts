@@ -35,11 +35,17 @@ export async function POST(request: Request) {
     const input = registerSchema.parse(payload)
     const passwordHash = await hashPassword(input.password)
 
-    const { mode, user } = await registerAuthUser(input.email, passwordHash)
+    const { mode, user, verificationDelivery } = await registerAuthUser(
+      input.email,
+      passwordHash
+    )
 
     return NextResponse.json(
       {
         mode,
+        requiresEmailVerification: true,
+        verificationEmailMode: verificationDelivery.mode,
+        verificationPreviewUrl: verificationDelivery.previewUrl ?? null,
         user: {
           id: user.id,
           email: user.email,

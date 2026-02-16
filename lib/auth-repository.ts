@@ -1,8 +1,8 @@
 import "server-only"
 
-import { eq, sql, type SQL } from "drizzle-orm"
+import { and, eq, gt, isNull, sql, type SQL } from "drizzle-orm"
 
-import { appUsers } from "@/lib/db-schema"
+import { appUsers, emailVerificationTokens } from "@/lib/db-schema"
 import { ensureSchema, getDb } from "@/lib/db"
 
 export interface AuthUserRecord {
@@ -11,6 +11,7 @@ export interface AuthUserRecord {
   passwordHash: string | null
   isAdmin: boolean
   isFirstAdmin: boolean
+  emailVerifiedAt: string | null
 }
 
 export class UserAlreadyExistsError extends Error {
@@ -27,12 +28,51 @@ export class UserNotFoundError extends Error {
   }
 }
 
+export interface EmailVerificationTokenRecord {
+  id: string
+  userId: string
+  tokenHash: string
+  expiresAt: string
+  consumedAt: string | null
+  createdAt: string
+}
+
 type AuthUserRow = {
   id: string
   email: string
   passwordHash: string | null
   isAdmin: boolean
   isFirstAdmin: boolean
+  emailVerifiedAt: Date | string | null
+}
+
+type EmailVerificationTokenRow = {
+  id: string
+  userId: string
+  tokenHash: string
+  expiresAt: Date | string
+  consumedAt: Date | string | null
+  createdAt: Date | string
+}
+
+function normalizeTimestamp(value: Date | string | null): string | null {
+  if (!value) {
+    return null
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  return value
+}
+
+function normalizeTokenTimestamp(value: Date | string): string {
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  return value
 }
 
 function normalizeRow(row: AuthUserRow): AuthUserRecord {
@@ -42,6 +82,20 @@ function normalizeRow(row: AuthUserRow): AuthUserRecord {
     passwordHash: row.passwordHash,
     isAdmin: row.isAdmin,
     isFirstAdmin: row.isFirstAdmin,
+    emailVerifiedAt: normalizeTimestamp(row.emailVerifiedAt),
+  }
+}
+
+function normalizeTokenRow(
+  row: EmailVerificationTokenRow
+): EmailVerificationTokenRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    tokenHash: row.tokenHash,
+    expiresAt: normalizeTokenTimestamp(row.expiresAt),
+    consumedAt: normalizeTimestamp(row.consumedAt),
+    createdAt: normalizeTokenTimestamp(row.createdAt),
   }
 }
 
@@ -82,6 +136,7 @@ async function selectUserByPredicate(predicate: SQL) {
       passwordHash: appUsers.passwordHash,
       isAdmin: appUsers.isAdmin,
       isFirstAdmin: appUsers.isFirstAdmin,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
     })
     .from(appUsers)
     .where(predicate)
@@ -91,7 +146,7 @@ async function selectUserByPredicate(predicate: SQL) {
     return null
   }
 
-  return normalizeRow(rows[0])
+  return normalizeRow(rows[0] as AuthUserRow)
 }
 
 export async function findUserByEmail(
@@ -119,10 +174,13 @@ export async function hasFirstAdmin(): Promise<boolean> {
 
 export async function createUser(
   email: string,
-  passwordHash: string | null
+  passwordHash: string | null,
+  options?: { emailVerifiedAt?: Date | null }
 ): Promise<AuthUserRecord> {
   await ensureSchema()
   const db = getDb()
+
+  const emailVerifiedAt = options?.emailVerifiedAt ?? null
 
   try {
     const rows = await db
@@ -130,6 +188,7 @@ export async function createUser(
       .values({
         email: email.toLowerCase(),
         passwordHash,
+        emailVerifiedAt,
       })
       .returning({
         id: appUsers.id,
@@ -137,13 +196,14 @@ export async function createUser(
         passwordHash: appUsers.passwordHash,
         isAdmin: appUsers.isAdmin,
         isFirstAdmin: appUsers.isFirstAdmin,
+        emailVerifiedAt: appUsers.emailVerifiedAt,
       })
 
     if (rows.length === 0) {
       throw new Error("Failed to insert app user.")
     }
 
-    return normalizeRow(rows[0])
+    return normalizeRow(rows[0] as AuthUserRow)
   } catch (error) {
     if (isUniqueViolation(error)) {
       throw new UserAlreadyExistsError(email)
@@ -155,14 +215,15 @@ export async function createUser(
 
 export async function ensureUserByEmail(
   email: string,
-  passwordHash: string | null = null
+  passwordHash: string | null = null,
+  options?: { emailVerifiedAt?: Date | null }
 ): Promise<AuthUserRecord> {
   const existing = await findUserByEmail(email)
   if (existing) {
     return existing
   }
 
-  return createUser(email, passwordHash)
+  return createUser(email, passwordHash, options)
 }
 
 export async function markUserAsAdmin(userId: string): Promise<AuthUserRecord> {
@@ -179,13 +240,14 @@ export async function markUserAsAdmin(userId: string): Promise<AuthUserRecord> {
       passwordHash: appUsers.passwordHash,
       isAdmin: appUsers.isAdmin,
       isFirstAdmin: appUsers.isFirstAdmin,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
     })
 
   if (rows.length === 0) {
     throw new UserNotFoundError(userId)
   }
 
-  return normalizeRow(rows[0])
+  return normalizeRow(rows[0] as AuthUserRow)
 }
 
 export async function updateUserPasswordHash(
@@ -205,13 +267,144 @@ export async function updateUserPasswordHash(
       passwordHash: appUsers.passwordHash,
       isAdmin: appUsers.isAdmin,
       isFirstAdmin: appUsers.isFirstAdmin,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
     })
 
   if (rows.length === 0) {
     throw new UserNotFoundError(userId)
   }
 
-  return normalizeRow(rows[0])
+  return normalizeRow(rows[0] as AuthUserRow)
+}
+
+export async function markUserEmailVerified(
+  userId: string
+): Promise<AuthUserRecord> {
+  await ensureSchema()
+  const db = getDb()
+
+  const rows = await db
+    .update(appUsers)
+    .set({
+      emailVerifiedAt: sql`COALESCE(${appUsers.emailVerifiedAt}, NOW())`,
+    })
+    .where(eq(appUsers.id, userId))
+    .returning({
+      id: appUsers.id,
+      email: appUsers.email,
+      passwordHash: appUsers.passwordHash,
+      isAdmin: appUsers.isAdmin,
+      isFirstAdmin: appUsers.isFirstAdmin,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
+    })
+
+  if (rows.length === 0) {
+    throw new UserNotFoundError(userId)
+  }
+
+  return normalizeRow(rows[0] as AuthUserRow)
+}
+
+export async function createEmailVerificationToken(
+  userId: string,
+  tokenHash: string,
+  expiresAt: Date
+): Promise<EmailVerificationTokenRecord> {
+  await ensureSchema()
+  const db = getDb()
+
+  await db
+    .update(emailVerificationTokens)
+    .set({
+      consumedAt: sql`NOW()`,
+    })
+    .where(
+      and(
+        eq(emailVerificationTokens.userId, userId),
+        isNull(emailVerificationTokens.consumedAt)
+      )
+    )
+
+  const rows = await db
+    .insert(emailVerificationTokens)
+    .values({
+      userId,
+      tokenHash,
+      expiresAt,
+    })
+    .returning({
+      id: emailVerificationTokens.id,
+      userId: emailVerificationTokens.userId,
+      tokenHash: emailVerificationTokens.tokenHash,
+      expiresAt: emailVerificationTokens.expiresAt,
+      consumedAt: emailVerificationTokens.consumedAt,
+      createdAt: emailVerificationTokens.createdAt,
+    })
+
+  const created = rows[0]
+  if (!created) {
+    throw new Error("Failed to create email verification token.")
+  }
+
+  return normalizeTokenRow(created as EmailVerificationTokenRow)
+}
+
+export async function consumeEmailVerificationToken(
+  tokenHash: string
+): Promise<EmailVerificationTokenRecord | null> {
+  await ensureSchema()
+  const db = getDb()
+
+  const rows = await db
+    .select({
+      id: emailVerificationTokens.id,
+      userId: emailVerificationTokens.userId,
+      tokenHash: emailVerificationTokens.tokenHash,
+      expiresAt: emailVerificationTokens.expiresAt,
+      consumedAt: emailVerificationTokens.consumedAt,
+      createdAt: emailVerificationTokens.createdAt,
+    })
+    .from(emailVerificationTokens)
+    .where(
+      and(
+        eq(emailVerificationTokens.tokenHash, tokenHash),
+        isNull(emailVerificationTokens.consumedAt),
+        gt(emailVerificationTokens.expiresAt, sql`NOW()`)
+      )
+    )
+    .limit(1)
+
+  const token = rows[0]
+  if (!token) {
+    return null
+  }
+
+  const consumedRows = await db
+    .update(emailVerificationTokens)
+    .set({
+      consumedAt: sql`NOW()`,
+    })
+    .where(
+      and(
+        eq(emailVerificationTokens.id, token.id),
+        isNull(emailVerificationTokens.consumedAt)
+      )
+    )
+    .returning({
+      id: emailVerificationTokens.id,
+      userId: emailVerificationTokens.userId,
+      tokenHash: emailVerificationTokens.tokenHash,
+      expiresAt: emailVerificationTokens.expiresAt,
+      consumedAt: emailVerificationTokens.consumedAt,
+      createdAt: emailVerificationTokens.createdAt,
+    })
+
+  const consumed = consumedRows[0]
+  if (!consumed) {
+    return null
+  }
+
+  return normalizeTokenRow(consumed as EmailVerificationTokenRow)
 }
 
 export async function markUserAsFirstAdmin(
@@ -231,13 +424,14 @@ export async function markUserAsFirstAdmin(
         passwordHash: appUsers.passwordHash,
         isAdmin: appUsers.isAdmin,
         isFirstAdmin: appUsers.isFirstAdmin,
+        emailVerifiedAt: appUsers.emailVerifiedAt,
       })
 
     if (rows.length === 0) {
       throw new UserNotFoundError(userId)
     }
 
-    return normalizeRow(rows[0])
+    return normalizeRow(rows[0] as AuthUserRow)
   } catch (error) {
     if (isUniqueViolation(error)) {
       const existing = await findUserById(userId)
@@ -273,11 +467,12 @@ export async function makeUserExclusiveFirstAdmin(
       passwordHash: appUsers.passwordHash,
       isAdmin: appUsers.isAdmin,
       isFirstAdmin: appUsers.isFirstAdmin,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
     })
 
   if (rows.length === 0) {
     throw new UserNotFoundError(userId)
   }
 
-  return normalizeRow(rows[0])
+  return normalizeRow(rows[0] as AuthUserRow)
 }

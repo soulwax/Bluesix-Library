@@ -1,6 +1,10 @@
 import "server-only"
 
+import { createHash, randomBytes } from "node:crypto"
+
 import {
+  consumeEmailVerificationToken as consumeDbEmailVerificationToken,
+  createEmailVerificationToken as createDbEmailVerificationToken,
   createUser as createDbUser,
   ensureUserByEmail as ensureDbUserByEmail,
   findUserByEmail as findDbUser,
@@ -9,6 +13,7 @@ import {
   makeUserExclusiveFirstAdmin as makeDbUserExclusiveFirstAdmin,
   markUserAsAdmin as markDbUserAsAdmin,
   markUserAsFirstAdmin as markDbUserAsFirstAdmin,
+  markUserEmailVerified as markDbUserEmailVerified,
   type AuthUserRecord,
   updateUserPasswordHash as updateDbUserPasswordHash,
   UserAlreadyExistsError,
@@ -19,6 +24,26 @@ import { hashPassword, verifyPassword } from "@/lib/password"
 
 export type AuthDataMode = "database" | "mock"
 
+const EMAIL_VERIFICATION_TTL_MINUTES = 60 * 24
+
+interface VerificationEmailDelivery {
+  mode: "resend" | "mock"
+  previewUrl?: string
+}
+
+interface VerifyTokenRecord {
+  userId: string
+  tokenHash: string
+  expiresAt: string
+  consumedAt: string | null
+}
+
+type EnsureAuthUserForSignInOptions = {
+  allowCreate?: boolean
+  autoVerifyEmail?: boolean
+  requireVerifiedEmail?: boolean
+}
+
 export class NotFirstAdminError extends Error {
   constructor() {
     super("Only FirstAdmin can grant admin access.")
@@ -26,7 +51,22 @@ export class NotFirstAdminError extends Error {
   }
 }
 
+export class EmailNotVerifiedError extends Error {
+  constructor() {
+    super("Email address must be verified before sign-in.")
+    this.name = "EmailNotVerifiedError"
+  }
+}
+
+export class InvalidEmailVerificationTokenError extends Error {
+  constructor() {
+    super("Email verification token is invalid or expired.")
+    this.name = "InvalidEmailVerificationTokenError"
+  }
+}
+
 const mockUsersByEmail = new Map<string, AuthUserRecord>()
+const mockVerificationTokensByHash = new Map<string, VerifyTokenRecord>()
 let superAdminBootstrap: Promise<void> | null = null
 
 function normalizeIdentifier(identifier: string): string {
@@ -40,6 +80,7 @@ function cloneUserRecord(user: AuthUserRecord): AuthUserRecord {
     passwordHash: user.passwordHash,
     isAdmin: user.isAdmin,
     isFirstAdmin: user.isFirstAdmin,
+    emailVerifiedAt: user.emailVerifiedAt,
   }
 }
 
@@ -59,12 +100,150 @@ function getConfiguredSuperAdmin(): { username: string; password: string } | nul
   }
 }
 
+function getEmailVerificationBaseUrl(): string {
+  const explicit =
+    process.env.EMAIL_VERIFICATION_BASE_URL?.trim() ||
+    process.env.NEXTAUTH_URL?.trim()
+  if (explicit) {
+    return explicit.replace(/\/+$/, "")
+  }
+
+  const vercel = process.env.VERCEL_URL?.trim()
+  if (vercel) {
+    return `https://${vercel.replace(/\/+$/, "")}`
+  }
+
+  return "http://localhost:3000"
+}
+
+function getEmailFromAddress(): string | null {
+  const configured =
+    process.env.EMAIL_FROM?.trim() || process.env.RESEND_FROM?.trim() || null
+  return configured
+}
+
+function hashEmailVerificationToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex")
+}
+
+function generateEmailVerificationToken(): string {
+  return randomBytes(32).toString("base64url")
+}
+
+function getEmailVerificationExpiryDate(): Date {
+  const expiresAt = new Date()
+  expiresAt.setMinutes(expiresAt.getMinutes() + EMAIL_VERIFICATION_TTL_MINUTES)
+  return expiresAt
+}
+
+function buildEmailVerificationUrl(token: string): string {
+  const baseUrl = getEmailVerificationBaseUrl()
+  const url = new URL("/api/auth/verify-email", `${baseUrl}/`)
+  url.searchParams.set("token", token)
+  return url.toString()
+}
+
+async function sendEmailVerificationEmail(
+  recipientEmail: string,
+  verificationUrl: string
+): Promise<VerificationEmailDelivery> {
+  const resendApiKey = process.env.RESEND_API_KEY?.trim()
+  const fromAddress = getEmailFromAddress()
+
+  if (!resendApiKey || !fromAddress) {
+    console.info(
+      `[auth] verification email fallback for ${recipientEmail}: ${verificationUrl}`
+    )
+    return {
+      mode: "mock",
+      previewUrl: verificationUrl,
+    }
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: fromAddress,
+      to: [recipientEmail],
+      subject: "Confirm your email address",
+      text: [
+        "Welcome.",
+        "",
+        "Confirm your email address to activate your account:",
+        verificationUrl,
+        "",
+        `This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.`,
+      ].join("\n"),
+      html: [
+        "<p>Welcome.</p>",
+        "<p>Confirm your email address to activate your account:</p>",
+        `<p><a href="${verificationUrl}">${verificationUrl}</a></p>`,
+        `<p>This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.</p>`,
+      ].join(""),
+    }),
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(
+      `Failed to send verification email (${response.status}): ${text || "No response body."}`
+    )
+  }
+
+  return {
+    mode: "resend",
+  }
+}
+
+async function issueAndSendVerificationForDbUser(
+  user: AuthUserRecord
+): Promise<VerificationEmailDelivery> {
+  const rawToken = generateEmailVerificationToken()
+  const hashedToken = hashEmailVerificationToken(rawToken)
+  const expiresAt = getEmailVerificationExpiryDate()
+
+  await createDbEmailVerificationToken(user.id, hashedToken, expiresAt)
+  return sendEmailVerificationEmail(user.email, buildEmailVerificationUrl(rawToken))
+}
+
+async function issueAndSendVerificationForMockUser(
+  user: AuthUserRecord
+): Promise<VerificationEmailDelivery> {
+  const rawToken = generateEmailVerificationToken()
+  const hashedToken = hashEmailVerificationToken(rawToken)
+  const expiresAt = getEmailVerificationExpiryDate().toISOString()
+
+  for (const [key, value] of mockVerificationTokensByHash.entries()) {
+    if (value.userId === user.id && value.consumedAt === null) {
+      mockVerificationTokensByHash.set(key, {
+        ...value,
+        consumedAt: new Date().toISOString(),
+      })
+    }
+  }
+
+  mockVerificationTokensByHash.set(hashedToken, {
+    userId: user.id,
+    tokenHash: hashedToken,
+    expiresAt,
+    consumedAt: null,
+  })
+
+  return sendEmailVerificationEmail(user.email, buildEmailVerificationUrl(rawToken))
+}
+
 async function ensureDatabaseSuperAdminSeeded(username: string, password: string) {
   let user = await findDbUser(username)
 
   if (!user) {
     const passwordHash = await hashPassword(password)
-    user = await createDbUser(username, passwordHash)
+    user = await createDbUser(username, passwordHash, {
+      emailVerifiedAt: new Date(),
+    })
   } else if (
     !user.passwordHash ||
     !(await verifyPassword(password, user.passwordHash))
@@ -73,11 +252,16 @@ async function ensureDatabaseSuperAdminSeeded(username: string, password: string
     user = await updateDbUserPasswordHash(user.id, passwordHash)
   }
 
+  if (!user.emailVerifiedAt) {
+    user = await markDbUserEmailVerified(user.id)
+  }
+
   await makeDbUserExclusiveFirstAdmin(user.id)
 }
 
 async function ensureMockSuperAdminSeeded(username: string, password: string) {
   const passwordHash = await hashPassword(password)
+  const now = new Date().toISOString()
 
   for (const existing of mockUsersByEmail.values()) {
     existing.isFirstAdmin = false
@@ -89,6 +273,7 @@ async function ensureMockSuperAdminSeeded(username: string, password: string) {
     existing.passwordHash = passwordHash
     existing.isAdmin = true
     existing.isFirstAdmin = true
+    existing.emailVerifiedAt = existing.emailVerifiedAt ?? now
     mockUsersByEmail.set(username, existing)
     return
   }
@@ -99,6 +284,7 @@ async function ensureMockSuperAdminSeeded(username: string, password: string) {
     passwordHash,
     isAdmin: true,
     isFirstAdmin: true,
+    emailVerifiedAt: now,
   })
 }
 
@@ -208,16 +394,27 @@ export async function findAuthUserById(id: string): Promise<{
 export async function registerAuthUser(
   email: string,
   passwordHash: string
-): Promise<{ mode: AuthDataMode; user: AuthUserRecord }> {
+): Promise<{
+  mode: AuthDataMode
+  user: AuthUserRecord
+  verificationDelivery: VerificationEmailDelivery
+}> {
   const mode = currentMode()
   await ensureSuperAdminSeeded()
 
   const normalizedEmail = normalizeIdentifier(email)
 
   if (mode === "database") {
+    const user = await createDbUser(normalizedEmail, passwordHash, {
+      emailVerifiedAt: null,
+    })
+
+    const verificationDelivery = await issueAndSendVerificationForDbUser(user)
+
     return {
       mode,
-      user: await createDbUser(normalizedEmail, passwordHash),
+      user,
+      verificationDelivery,
     }
   }
 
@@ -232,9 +429,130 @@ export async function registerAuthUser(
     passwordHash,
     isAdmin: false,
     isFirstAdmin: false,
+    emailVerifiedAt: null,
   }
 
   mockUsersByEmail.set(normalizedEmail, user)
+  const verificationDelivery = await issueAndSendVerificationForMockUser(user)
+
+  return {
+    mode,
+    user: cloneUserRecord(user),
+    verificationDelivery,
+  }
+}
+
+export async function resendAuthVerificationEmail(
+  email: string
+): Promise<{
+  mode: AuthDataMode
+  delivered: VerificationEmailDelivery
+  alreadyVerified: boolean
+}> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedEmail = normalizeIdentifier(email)
+
+  if (mode === "database") {
+    const user = await findDbUser(normalizedEmail)
+    if (!user) {
+      throw new UserNotFoundError(normalizedEmail)
+    }
+
+    if (user.emailVerifiedAt) {
+      return {
+        mode,
+        delivered: { mode: "mock" },
+        alreadyVerified: true,
+      }
+    }
+
+    const delivered = await issueAndSendVerificationForDbUser(user)
+    return {
+      mode,
+      delivered,
+      alreadyVerified: false,
+    }
+  }
+
+  const user = mockUsersByEmail.get(normalizedEmail)
+  if (!user) {
+    throw new UserNotFoundError(normalizedEmail)
+  }
+
+  if (user.emailVerifiedAt) {
+    return {
+      mode,
+      delivered: { mode: "mock" },
+      alreadyVerified: true,
+    }
+  }
+
+  const delivered = await issueAndSendVerificationForMockUser(user)
+
+  return {
+    mode,
+    delivered,
+    alreadyVerified: false,
+  }
+}
+
+export async function verifyAuthEmailToken(
+  rawToken: string
+): Promise<{ mode: AuthDataMode; user: AuthUserRecord }> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedRawToken = rawToken.trim()
+  if (!normalizedRawToken) {
+    throw new InvalidEmailVerificationTokenError()
+  }
+
+  const tokenHash = hashEmailVerificationToken(normalizedRawToken)
+
+  if (mode === "database") {
+    const token = await consumeDbEmailVerificationToken(tokenHash)
+    if (!token) {
+      throw new InvalidEmailVerificationTokenError()
+    }
+
+    const user = await markDbUserEmailVerified(token.userId)
+
+    return {
+      mode,
+      user,
+    }
+  }
+
+  const token = mockVerificationTokensByHash.get(tokenHash)
+  if (!token) {
+    throw new InvalidEmailVerificationTokenError()
+  }
+
+  if (token.consumedAt) {
+    throw new InvalidEmailVerificationTokenError()
+  }
+
+  if (Date.parse(token.expiresAt) <= Date.now()) {
+    throw new InvalidEmailVerificationTokenError()
+  }
+
+  mockVerificationTokensByHash.set(tokenHash, {
+    ...token,
+    consumedAt: new Date().toISOString(),
+  })
+
+  const user = [...mockUsersByEmail.values()].find(
+    (existing) => existing.id === token.userId
+  )
+
+  if (!user) {
+    throw new InvalidEmailVerificationTokenError()
+  }
+
+  user.emailVerifiedAt = user.emailVerifiedAt ?? new Date().toISOString()
+  mockUsersByEmail.set(user.email, user)
 
   return {
     mode,
@@ -243,16 +561,30 @@ export async function registerAuthUser(
 }
 
 export async function ensureAuthUserForSignIn(
-  identifier: string
+  identifier: string,
+  options?: EnsureAuthUserForSignInOptions
 ): Promise<{ mode: AuthDataMode; user: AuthUserRecord }> {
   const mode = currentMode()
   await ensureSuperAdminSeeded()
 
   const normalizedIdentifier = normalizeIdentifier(identifier)
   const configuredSuperAdmin = getConfiguredSuperAdmin()
+  const allowCreate = options?.allowCreate ?? true
+  const autoVerifyEmail = options?.autoVerifyEmail ?? false
+  const requireVerifiedEmail = options?.requireVerifiedEmail ?? false
 
   if (mode === "database") {
-    let user = await ensureDbUserByEmail(normalizedIdentifier)
+    let user = allowCreate
+      ? await ensureDbUserByEmail(normalizedIdentifier)
+      : await findDbUser(normalizedIdentifier)
+
+    if (!user) {
+      throw new UserNotFoundError(normalizedIdentifier)
+    }
+
+    if (autoVerifyEmail && !user.emailVerifiedAt) {
+      user = await markDbUserEmailVerified(user.id)
+    }
 
     if (configuredSuperAdmin && configuredSuperAdmin.username === normalizedIdentifier) {
       user = await makeDbUserExclusiveFirstAdmin(user.id)
@@ -266,19 +598,32 @@ export async function ensureAuthUserForSignIn(
       }
     }
 
+    if (requireVerifiedEmail && !user.emailVerifiedAt) {
+      throw new EmailNotVerifiedError()
+    }
+
     return { mode, user }
   }
 
   let user = mockUsersByEmail.get(normalizedIdentifier)
   if (!user) {
+    if (!allowCreate) {
+      throw new UserNotFoundError(normalizedIdentifier)
+    }
+
     user = {
       id: crypto.randomUUID(),
       email: normalizedIdentifier,
       passwordHash: null,
       isAdmin: false,
       isFirstAdmin: false,
+      emailVerifiedAt: null,
     }
     mockUsersByEmail.set(normalizedIdentifier, user)
+  }
+
+  if (autoVerifyEmail && !user.emailVerifiedAt) {
+    user.emailVerifiedAt = new Date().toISOString()
   }
 
   if (configuredSuperAdmin && configuredSuperAdmin.username === normalizedIdentifier) {
@@ -298,6 +643,12 @@ export async function ensureAuthUserForSignIn(
       user.isFirstAdmin = true
     }
   }
+
+  if (requireVerifiedEmail && !user.emailVerifiedAt) {
+    throw new EmailNotVerifiedError()
+  }
+
+  mockUsersByEmail.set(normalizedIdentifier, user)
 
   return {
     mode,

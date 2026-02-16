@@ -4,6 +4,7 @@ import GitHubProvider from "next-auth/providers/github"
 import { z } from "zod"
 
 import {
+  EmailNotVerifiedError,
   ensureAuthUserForSignIn,
   ensureSuperAdminSeeded,
   findAuthUserByEmail,
@@ -65,7 +66,10 @@ export const authOptions: NextAuthOptions = {
         const password = parsed.data.password
 
         if (isConfiguredSuperAdminCredentials(identifier, password)) {
-          const { user } = await ensureAuthUserForSignIn(identifier)
+          const { user } = await ensureAuthUserForSignIn(identifier, {
+            allowCreate: true,
+            autoVerifyEmail: true,
+          })
 
           return {
             id: user.id,
@@ -85,25 +89,43 @@ export const authOptions: NextAuthOptions = {
           return null
         }
 
-        const { user: syncedUser } = await ensureAuthUserForSignIn(identifier)
+        try {
+          const { user: syncedUser } = await ensureAuthUserForSignIn(identifier, {
+            allowCreate: false,
+            requireVerifiedEmail: true,
+          })
 
-        return {
-          id: syncedUser.id,
-          email: syncedUser.email,
-          isAdmin: syncedUser.isAdmin,
-          isFirstAdmin: syncedUser.isFirstAdmin,
+          return {
+            id: syncedUser.id,
+            email: syncedUser.email,
+            isAdmin: syncedUser.isAdmin,
+            isFirstAdmin: syncedUser.isFirstAdmin,
+          }
+        } catch (error) {
+          if (error instanceof EmailNotVerifiedError) {
+            throw new Error("EMAIL_NOT_VERIFIED")
+          }
+
+          throw error
         }
       },
     }),
   ],
   callbacks: {
-    async signIn({ user }) {
+    async signIn({ user, account }) {
       const identifier = user.email?.trim().toLowerCase()
       if (!identifier) {
         return false
       }
 
-      const { user: syncedUser } = await ensureAuthUserForSignIn(identifier)
+      const isCredentialsSignIn = account?.provider === "credentials"
+      const isGitHubSignIn = account?.provider === "github"
+
+      const { user: syncedUser } = await ensureAuthUserForSignIn(identifier, {
+        allowCreate: !isCredentialsSignIn,
+        autoVerifyEmail: isGitHubSignIn,
+        requireVerifiedEmail: isCredentialsSignIn,
+      })
       user.id = syncedUser.id
       user.email = syncedUser.email
       user.isAdmin = syncedUser.isAdmin

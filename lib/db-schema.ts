@@ -70,6 +70,7 @@ export const appUsers = pgTable(
     passwordHash: text("password_hash"),
     isAdmin: boolean("is_admin").default(false).notNull(),
     isFirstAdmin: boolean("is_first_admin").default(false).notNull(),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -80,6 +81,31 @@ export const appUsers = pgTable(
     uniqueIndex("app_users_single_first_admin_idx")
       .on(table.isFirstAdmin)
       .where(sql`${table.isFirstAdmin} = true`),
+  ]
+)
+
+export const emailVerificationTokens = pgTable(
+  "email_verification_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => appUsers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "email_verification_tokens_token_hash_length_check",
+      sql`char_length(${table.tokenHash}) = 64`
+    ),
+    index("email_verification_tokens_user_id_idx").on(table.userId),
+    index("email_verification_tokens_expires_at_idx").on(table.expiresAt),
+    uniqueIndex("email_verification_tokens_token_hash_idx").on(table.tokenHash),
   ]
 )
 
