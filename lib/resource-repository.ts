@@ -2,6 +2,7 @@ import "server-only"
 
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm"
 
+import { ensureSchema, getDb } from "@/lib/db"
 import {
   resourceAuditLogs,
   resourceCardTags,
@@ -9,16 +10,17 @@ import {
   resourceCategories,
   resourceLinks,
   resourceTags,
-import {
-  DEFAULT_RESOURCE_CATEGORY_NAME,
-  FALLBACK_RESOURCE_CATEGORY_NAME,
-  type ResourceAuditAction,
-  type ResourceAuditActor,
-  type ResourceAuditLogEntry,
-  type ResourceCard,
-  type ResourceCategory,
-  type ResourceInput,
+} from "@/lib/db-schema"
+import type {
+  ResourceAuditAction,
+  ResourceAuditActor,
+  ResourceAuditLogEntry,
+  ResourceCard,
+  ResourceCategory,
+  ResourceInput,
 } from "@/lib/resources"
+
+const DEFAULT_RESOURCE_CATEGORY_NAME = "General"
 const FALLBACK_RESOURCE_CATEGORY_NAME = "Uncategorized"
 
 export class ResourceNotFoundError extends Error {
@@ -85,10 +87,6 @@ function normalizeTimestamp(value: Date | string | null): string | null {
   }
 
   return value
-export function normalizeCategoryName(value: string): string {
-
-function normalizeAuditAction(value: string): ResourceAuditAction {
-  return value === "restored" ? "restored" : "archived"
 }
 
 function normalizeCategoryName(value: string): string {
@@ -99,25 +97,28 @@ function normalizeCategorySymbol(value: string | null | undefined): string | nul
   if (typeof value !== "string") {
     return null
   }
-  if (!error || typeof error !== "object") {
+
+  const normalized = value.trim()
+  if (!normalized) {
     return null
   }
 
-  const anyError = error as { code?: unknown; cause?: unknown }
+  return normalized.slice(0, 16)
+}
 
-  if (typeof anyError.code === "string") {
-    return anyError.code
-  }
+function normalizeTagName(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 40)
+}
 
-  const cause = anyError.cause
-  if (!cause || typeof cause !== "object") {
-    return null
-  }
+function normalizeAuditAction(value: string): ResourceAuditAction {
+  return value === "restored" ? "restored" : "archived"
+}
 
-  const causeWithCode = cause as { code?: unknown }
-  if (typeof causeWithCode.code === "string") {
-    return causeWithCode.code
-  }
+function normalizeCategoryRow(row: ResourceCategoryRow): ResourceCategory {
+  return {
+    id: row.id,
+    name: normalizeCategoryName(row.name),
+    symbol: normalizeCategorySymbol(row.symbol),
     createdAt: normalizeTimestamp(row.createdAt) ?? new Date(0).toISOString(),
     updatedAt: normalizeTimestamp(row.updatedAt) ?? new Date(0).toISOString(),
   }

@@ -79,7 +79,7 @@ export async function ensureSchema() {
     `;
 
     await sql`
-      ON resource_categories (created_at)
+      CREATE UNIQUE INDEX IF NOT EXISTS resource_categories_name_lower_idx
       ON resource_categories ((lower(name)))
     `;
 

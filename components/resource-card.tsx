@@ -11,6 +11,7 @@ interface ResourceCardProps {
   categorySymbol?: string | null
   onDelete: (id: string) => void
   onEdit: (resource: ResourceCard) => void
+  onHoverChange?: (resource: ResourceCard | null) => void
   isDeleting?: boolean
   canManage?: boolean
 }
@@ -20,11 +21,16 @@ export function ResourceCardItem({
   categorySymbol,
   onDelete,
   onEdit,
+  onHoverChange,
   isDeleting = false,
   canManage = false,
 }: ResourceCardProps) {
   return (
-    <div className="group flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:shadow-primary/5">
+    <div
+      className="group flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:shadow-primary/5"
+      onMouseEnter={() => onHoverChange?.(resource)}
+      onMouseLeave={() => onHoverChange?.(null)}
+    >
       <div className="mb-3 flex items-center justify-between">
         <Badge variant="secondary" className="font-medium">
           {categorySymbol ? `${categorySymbol} ` : ""}

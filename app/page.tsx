@@ -113,7 +113,19 @@ interface PromoteAdminResponse extends ApiErrorResponse {
   };
 }
 
+interface LinkMetadataResponse extends ApiErrorResponse {
+  url?: string;
+  label?: string;
+  briefDescription?: string | null;
+  tags?: string[];
+  suggestedCategory?: string | null;
+  source?: "perplexity" | "fallback";
+}
+
 type AuthMode = "login" | "register";
+type PasteHoverTarget =
+  | { type: "card"; resourceId: string; category: string }
+  | { type: "category"; category: string | "All" };
 
 async function readJson<T>(response: Response): Promise<T | null> {
   try {
@@ -121,6 +133,51 @@ async function readJson<T>(response: Response): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function extractFirstUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/[^\s<>"')\}\]]+/i);
+  return match?.[0] ?? null;
+}
+
+function isEditablePasteTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      "input, textarea, select, [contenteditable='true'], [contenteditable='']",
+    ),
+  );
+}
+
+function mergeTags(existingTags: string[], nextTags: string[]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const rawTag of [...existingTags, ...nextTags]) {
+    const normalized = normalizeWhitespace(rawTag).slice(0, 40);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(normalized);
+
+    if (merged.length >= 24) {
+      break;
+    }
+  }
+
+  return merged;
 }
 
 export default function Page() {
@@ -157,6 +214,9 @@ export default function Page() {
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
   const [promoteIdentifier, setPromoteIdentifier] = useState("");
   const [isPromotingAdmin, setIsPromotingAdmin] = useState(false);
+  const [isAiPasteRunning, setIsAiPasteRunning] = useState(false);
+  const [pasteHoverTarget, setPasteHoverTarget] =
+    useState<PasteHoverTarget | null>(null);
   const {
     schemes: colorSchemes,
     currentSchemeIndex,
@@ -890,6 +950,241 @@ export default function Page() {
     [canManageResources, editingResource, fetchCategories],
   );
 
+  const handleCardHoverChange = useCallback((resource: ResourceCard | null) => {
+    if (!resource) {
+      setPasteHoverTarget((previous) =>
+        previous?.type === "card" ? null : previous,
+      );
+      return;
+    }
+
+    setPasteHoverTarget({
+      type: "card",
+      resourceId: resource.id,
+      category: resource.category,
+    });
+  }, []);
+
+  const handleCategoryHoverChange = useCallback(
+    (category: string | "All" | null) => {
+      if (!category) {
+        setPasteHoverTarget((previous) =>
+          previous?.type === "category" ? null : previous,
+        );
+        return;
+      }
+
+      setPasteHoverTarget({
+        type: "category",
+        category,
+      });
+    },
+    [],
+  );
+
+  const handlePasteIntoHoverTarget = useCallback(
+    async (rawUrl: string, target: PasteHoverTarget) => {
+      if (!canManageResources) {
+        toast.error("Admin access required", {
+          description:
+            "Only admins can paste links directly into cards or categories.",
+        });
+        return;
+      }
+
+      if (isSaving || isAiPasteRunning) {
+        return;
+      }
+
+      setIsAiPasteRunning(true);
+
+      try {
+        const metadataResponse = await fetch("/api/ai/link-metadata", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url: rawUrl,
+            contextCategory: target.category,
+          }),
+        });
+        const metadataPayload =
+          await readJson<LinkMetadataResponse>(metadataResponse);
+
+        if (!metadataResponse.ok || !metadataPayload?.url) {
+          throw new Error(
+            metadataPayload?.error ?? "Failed to generate link metadata.",
+          );
+        }
+
+        const url = metadataPayload.url;
+        const label = normalizeWhitespace(metadataPayload.label ?? "").slice(
+          0,
+          120,
+        );
+        const briefDescription = normalizeWhitespace(
+          metadataPayload.briefDescription ?? "",
+        ).slice(0, 280);
+        const aiTags = mergeTags([], metadataPayload.tags ?? []);
+        const linkInput = {
+          url,
+          label: label || url,
+          note: briefDescription || undefined,
+        };
+
+        if (target.type === "card") {
+          const currentResource = resources.find(
+            (resource) => resource.id === target.resourceId,
+          );
+          if (!currentResource) {
+            throw new Error("Hovered card no longer exists.");
+          }
+
+          const alreadyHasLink = currentResource.links.some(
+            (link) => link.url.toLowerCase() === url.toLowerCase(),
+          );
+          if (alreadyHasLink) {
+            toast.message("Link already exists in this card.");
+            return;
+          }
+
+          const nextInput: ResourceInput = {
+            category: currentResource.category,
+            tags: mergeTags(currentResource.tags ?? [], aiTags),
+            links: [...currentResource.links, linkInput].map((link) => ({
+              url: link.url,
+              label: link.label,
+              note: link.note ?? undefined,
+            })),
+          };
+
+          const saveResponse = await fetch(
+            `/api/resources/${currentResource.id}`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(nextInput),
+            },
+          );
+          const savePayload = await readJson<ResourceResponse>(saveResponse);
+
+          if (!saveResponse.ok || !savePayload?.resource) {
+            throw new Error(savePayload?.error ?? "Failed to update card.");
+          }
+
+          const savedResource = savePayload.resource;
+          if (savePayload.mode) {
+            setDataMode(savePayload.mode);
+          }
+
+          setResources((previous) =>
+            previous.map((resource) =>
+              resource.id === savedResource.id ? savedResource : resource,
+            ),
+          );
+
+          toast.success("Link pasted into card", {
+            description: `${linkInput.label} added to ${currentResource.category}.`,
+          });
+        } else {
+          const targetCategory =
+            target.category !== "All"
+              ? target.category
+              : normalizeWhitespace(
+                  metadataPayload.suggestedCategory ||
+                    activeCategory ||
+                    "General",
+                );
+
+          const createInput: ResourceInput = {
+            category: targetCategory,
+            tags: aiTags,
+            links: [linkInput],
+          };
+
+          const saveResponse = await fetch("/api/resources", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(createInput),
+          });
+          const savePayload = await readJson<ResourceResponse>(saveResponse);
+
+          if (!saveResponse.ok || !savePayload?.resource) {
+            throw new Error(savePayload?.error ?? "Failed to create resource.");
+          }
+
+          const savedResource = savePayload.resource;
+          if (savePayload.mode) {
+            setDataMode(savePayload.mode);
+          }
+
+          setResources((previous) => [savedResource, ...previous]);
+
+          toast.success("Link pasted into category", {
+            description: `${linkInput.label} added under ${targetCategory}.`,
+          });
+        }
+
+        if (metadataPayload.source === "fallback") {
+          toast.message("AI fallback used", {
+            description:
+              "Perplexity response was unavailable, so basic metadata was used.",
+          });
+        }
+
+        void fetchCategories();
+      } catch (error) {
+        toast.error("Paste failed", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "Could not paste this URL.",
+        });
+      } finally {
+        setIsAiPasteRunning(false);
+      }
+    },
+    [
+      activeCategory,
+      canManageResources,
+      fetchCategories,
+      isAiPasteRunning,
+      isSaving,
+      resources,
+    ],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleWindowPaste = (event: ClipboardEvent) => {
+      if (!pasteHoverTarget || isEditablePasteTarget(event.target)) {
+        return;
+      }
+
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      const pastedUrl = extractFirstUrl(text);
+      if (!pastedUrl) {
+        return;
+      }
+
+      event.preventDefault();
+      void handlePasteIntoHoverTarget(pastedUrl, pasteHoverTarget);
+    };
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste);
+    };
+  }, [handlePasteIntoHoverTarget, pasteHoverTarget]);
+
   const handleRestoreArchivedResource = useCallback(
     async (resourceId: string) => {
       const response = await fetch(
@@ -1024,17 +1319,15 @@ export default function Page() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <BookOpen className="h-4 w-4" />
           </div>
-          <div className="hidden items-start gap-2.5 sm:flex">
-            <div>
-              <h1 className="text-base font-semibold leading-tight text-foreground">
-                Knowledge
-              </h1>
-              {isAuthenticated && session?.user?.email ? (
-                <span className="mt-1 inline-flex max-w-56 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
-                  <span className="truncate">{session.user.email}</span>
-                </span>
-              ) : null}
-            </div>
+          <div className="hidden items-center gap-2.5 sm:flex">
+            <h1 className="text-base font-semibold leading-tight text-foreground">
+              Knowledge
+            </h1>
+            {isAuthenticated && session?.user?.email ? (
+              <span className="inline-flex max-w-56 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
+                <span className="truncate">{session.user.email}</span>
+              </span>
+            ) : null}
             <div className="inline-flex flex-col rounded-xl border border-border bg-secondary/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
               <span>{resources.length} cards</span>
               <span>{totalLinks} links</span>
@@ -1060,6 +1353,17 @@ export default function Page() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {canManageResources ? (
+            <div className="hidden max-w-64 items-center truncate rounded-full border border-border bg-secondary/40 px-3 py-1 text-[11px] text-muted-foreground xl:flex">
+              {isAiPasteRunning
+                ? "Pasting link with AI..."
+                : pasteHoverTarget?.type === "card"
+                  ? "Ctrl+V into hovered card"
+                  : pasteHoverTarget?.type === "category"
+                    ? `Ctrl+V into category: ${pasteHoverTarget.category}`
+                    : "Hover a card/category, then press Ctrl+V"}
+            </div>
+          ) : null}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm">
@@ -1229,6 +1533,7 @@ export default function Page() {
             categories={categories}
             activeCategory={activeCategory}
             onCategoryChange={setActiveCategory}
+            onHoverCategoryChange={handleCategoryHoverChange}
             resourceCounts={resourceCounts}
             categorySymbols={categorySymbols}
           />
@@ -1249,6 +1554,7 @@ export default function Page() {
                 setActiveCategory(category);
                 setSidebarOpen(false);
               }}
+              onHoverCategoryChange={handleCategoryHoverChange}
               resourceCounts={resourceCounts}
               categorySymbols={categorySymbols}
             />
@@ -1328,6 +1634,7 @@ export default function Page() {
                   categorySymbol={categorySymbols[resource.category]}
                   onDelete={handleDelete}
                   onEdit={handleEdit}
+                  onHoverChange={handleCardHoverChange}
                   isDeleting={deletingResourceId === resource.id}
                   canManage={canManageResources}
                 />

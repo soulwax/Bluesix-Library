@@ -26,6 +26,7 @@ interface CategorySidebarProps {
   categories: string[]
   activeCategory: string | "All"
   onCategoryChange: (cat: string | "All") => void
+  onHoverCategoryChange?: (category: string | "All" | null) => void
   resourceCounts: Record<string, number>
   categorySymbols?: Record<string, string | undefined>
 }
@@ -51,6 +52,7 @@ export function CategorySidebar({
   categories,
   activeCategory,
   onCategoryChange,
+  onHoverCategoryChange,
   resourceCounts,
   categorySymbols = {},
 }: CategorySidebarProps) {
@@ -75,6 +77,8 @@ export function CategorySidebar({
               key={cat}
               type="button"
               onClick={() => onCategoryChange(cat)}
+              onMouseEnter={() => onHoverCategoryChange?.(cat)}
+              onMouseLeave={() => onHoverCategoryChange?.(null)}
               aria-current={isActive ? "page" : undefined}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
