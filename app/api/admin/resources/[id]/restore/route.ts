@@ -4,6 +4,7 @@ import { z } from "zod"
 import { auth } from "@/auth"
 import { ResourceNotFoundError } from "@/lib/resource-repository"
 import { restoreResourceService } from "@/lib/resource-service"
+import type { ResourceAuditActor } from "@/lib/resources"
 
 export const runtime = "nodejs"
 
@@ -20,6 +21,13 @@ async function parseResourceId(context: RouteContext) {
   return z.string().uuid().parse(params.id)
 }
 
+function auditActorFromSession(session: Awaited<ReturnType<typeof auth>>): ResourceAuditActor {
+  return {
+    userId: session?.user?.id ?? null,
+    identifier: session?.user?.email ?? session?.user?.id ?? null,
+  }
+}
+
 export async function POST(_request: Request, context: RouteContext) {
   const session = await auth()
 
@@ -33,7 +41,10 @@ export async function POST(_request: Request, context: RouteContext) {
 
   try {
     const resourceId = await parseResourceId(context)
-    const { mode, resource } = await restoreResourceService(resourceId)
+    const { mode, resource } = await restoreResourceService(
+      resourceId,
+      auditActorFromSession(session)
+    )
 
     return NextResponse.json({ mode, resource })
   } catch (error) {

@@ -7,6 +7,7 @@ import {
   createMockResource,
   deleteMockResource,
   hasAnyMockResources,
+  listMockResourceAuditLogs,
   listMockResourcesIncludingDeleted,
   listMockResources,
   restoreMockResource,
@@ -16,12 +17,18 @@ import {
   createResource as createDbResource,
   deleteResource as deleteDbResource,
   hasAnyResources as hasAnyDbResources,
+  listResourceAuditLogs as listDbResourceAuditLogs,
   listResourcesIncludingDeleted as listDbResourcesIncludingDeleted,
   listResources as listDbResources,
   restoreResource as restoreDbResource,
   updateResource as updateDbResource,
 } from "@/lib/resource-repository"
-import type { ResourceCard, ResourceInput } from "@/lib/resources"
+import type {
+  ResourceAuditActor,
+  ResourceAuditLogEntry,
+  ResourceCard,
+  ResourceInput,
+} from "@/lib/resources"
 
 export type ResourceDataMode = "database" | "mock"
 
@@ -159,33 +166,55 @@ export async function updateResourceService(
 }
 
 export async function deleteResourceService(
-  id: string
+  id: string,
+  actor?: ResourceAuditActor
 ): Promise<{ mode: ResourceDataMode }> {
   const mode = currentMode()
 
   if (mode === "database") {
-    await deleteDbResource(id)
+    await deleteDbResource(id, actor)
     return { mode }
   }
 
-  await deleteMockResource(id)
+  await deleteMockResource(id, actor)
   return { mode }
 }
 
 export async function restoreResourceService(
-  id: string
+  id: string,
+  actor?: ResourceAuditActor
 ): Promise<{ mode: ResourceDataMode; resource: ResourceCard }> {
   const mode = currentMode()
 
   if (mode === "database") {
     return {
       mode,
-      resource: await restoreDbResource(id),
+      resource: await restoreDbResource(id, actor),
     }
   }
 
   return {
     mode,
-    resource: await restoreMockResource(id),
+    resource: await restoreMockResource(id, actor),
+  }
+}
+
+export async function listResourceAuditLogsService(
+  limit = 200
+): Promise<{ mode: ResourceDataMode; logs: ResourceAuditLogEntry[] }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    await ensureDatabaseBootstrapped()
+
+    return {
+      mode,
+      logs: await listDbResourceAuditLogs(limit),
+    }
+  }
+
+  return {
+    mode,
+    logs: await listMockResourceAuditLogs(limit),
   }
 }

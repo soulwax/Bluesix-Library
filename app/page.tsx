@@ -389,15 +389,41 @@ export default function Page() {
     [canManageResources, editingResource]
   )
 
+  const handleRestoreArchivedResource = useCallback(async (resourceId: string) => {
+    const response = await fetch(`/api/admin/resources/${resourceId}/restore`, {
+      method: "POST",
+    })
+    const payload = await readJson<ResourceResponse>(response)
+
+    if (!response.ok || !payload?.resource) {
+      throw new Error(payload?.error ?? "Failed to restore archived resource.")
+    }
+
+    if (payload.mode) {
+      setDataMode(payload.mode)
+    }
+
+    const restoredResource = payload.resource
+    setResources((prev) => {
+      const withoutRestored = prev.filter(
+        (resource) => resource.id !== restoredResource.id
+      )
+      return [restoredResource, ...withoutRestored]
+    })
+
+    return restoredResource
+  }, [])
+
   const handleDelete = useCallback(
     async (resourceId: string) => {
       if (!canManageResources) {
         toast.error("Admin access required", {
-          description: "Only admins can delete resource cards.",
+          description: "Only admins can archive resource cards.",
         })
         return
       }
 
+      const archivedResource = resources.find((resource) => resource.id === resourceId)
       setDeletingResourceId(resourceId)
 
       try {
@@ -415,21 +441,43 @@ export default function Page() {
         }
 
         setResources((prev) => prev.filter((resource) => resource.id !== resourceId))
-        toast.success("Resource archived", {
-          description: "Hidden from library. You can restore it in Admin Panel.",
+        toast("Resource archived", {
+          description: "Hidden from library. Restore it now or from Admin Panel.",
+          action: {
+            label: "Undo",
+            onClick: () => {
+              void (async () => {
+                try {
+                  const restored = await handleRestoreArchivedResource(resourceId)
+                  toast.success("Archive undone", {
+                    description: `${restored.category} is visible again.`,
+                  })
+                } catch (error) {
+                  toast.error("Undo failed", {
+                    description:
+                      error instanceof Error
+                        ? error.message
+                        : "Could not restore this resource.",
+                  })
+                }
+              })()
+            },
+          },
         })
       } catch (error) {
         toast.error("Archive failed", {
           description:
             error instanceof Error
               ? error.message
-              : "Could not archive this resource.",
+              : archivedResource
+                ? `Could not archive ${archivedResource.category}.`
+                : "Could not archive this resource.",
         })
       } finally {
         setDeletingResourceId(null)
       }
     },
-    [canManageResources]
+    [canManageResources, handleRestoreArchivedResource, resources]
   )
 
   const handleEdit = useCallback((resource: ResourceCard) => {

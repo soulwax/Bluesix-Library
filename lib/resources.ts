@@ -12,6 +12,23 @@ export interface ResourceCard {
   deletedAt?: string | null
 }
 
+export type ResourceAuditAction = "archived" | "restored"
+
+export interface ResourceAuditActor {
+  userId?: string | null
+  identifier?: string | null
+}
+
+export interface ResourceAuditLogEntry {
+  id: string
+  resourceId: string
+  resourceCategory: string
+  action: ResourceAuditAction
+  actorUserId: string | null
+  actorIdentifier: string
+  createdAt: string
+}
+
 export interface ResourceLinkInput {
   url: string
   label: string

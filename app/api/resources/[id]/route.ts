@@ -8,6 +8,7 @@ import {
   updateResourceService,
 } from "@/lib/resource-service"
 import { parseResourceInput } from "@/lib/resource-validation"
+import type { ResourceAuditActor } from "@/lib/resources"
 
 export const runtime = "nodejs"
 
@@ -56,6 +57,13 @@ async function parseResourceId(context: RouteContext) {
   return z.string().uuid().parse(params.id)
 }
 
+function auditActorFromSession(session: Awaited<ReturnType<typeof auth>>): ResourceAuditActor {
+  return {
+    userId: session?.user?.id ?? null,
+    identifier: session?.user?.email ?? session?.user?.id ?? null,
+  }
+}
+
 export async function PUT(request: Request, context: RouteContext) {
   try {
     const session = await auth()
@@ -88,7 +96,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
     }
 
     const resourceId = await parseResourceId(context)
-    const { mode } = await deleteResourceService(resourceId)
+    const { mode } = await deleteResourceService(
+      resourceId,
+      auditActorFromSession(session)
+    )
 
     return NextResponse.json({ mode, ok: true })
   } catch (error) {

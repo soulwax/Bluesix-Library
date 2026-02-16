@@ -1,10 +1,17 @@
 import "server-only"
 
 import { loadLibraryResourcesFromFile } from "@/lib/library-parser"
-import type { ResourceCard, ResourceInput } from "@/lib/resources"
+import type {
+  ResourceAuditAction,
+  ResourceAuditActor,
+  ResourceAuditLogEntry,
+  ResourceCard,
+  ResourceInput,
+} from "@/lib/resources"
 import { ResourceNotFoundError } from "@/lib/resource-repository"
 
 let mockStore: ResourceCard[] | null = null
+let mockAuditLogs: ResourceAuditLogEntry[] | null = null
 
 function cloneResource(resource: ResourceCard): ResourceCard {
   return {
@@ -15,19 +22,61 @@ function cloneResource(resource: ResourceCard): ResourceCard {
   }
 }
 
+function cloneAuditLog(log: ResourceAuditLogEntry): ResourceAuditLogEntry {
+  return {
+    ...log,
+  }
+}
+
+function normalizeAuditActor(actor?: ResourceAuditActor): {
+  actorUserId: string | null
+  actorIdentifier: string
+} {
+  const actorUserId = actor?.userId?.trim() || null
+  const normalizedIdentifier = actor?.identifier?.trim().toLowerCase()
+  const fallbackIdentifier = actorUserId ?? "unknown"
+
+  return {
+    actorUserId,
+    actorIdentifier: (normalizedIdentifier || fallbackIdentifier).slice(0, 320),
+  }
+}
+
 function ensureMockStore() {
-  if (mockStore !== null) {
-    return
+  if (mockStore === null) {
+    mockStore = loadLibraryResourcesFromFile().map((resource) => ({
+      ...resource,
+      deletedAt: resource.deletedAt ?? null,
+    }))
   }
 
-  mockStore = loadLibraryResourcesFromFile().map((resource) => ({
-    ...resource,
-    deletedAt: resource.deletedAt ?? null,
-  }))
+  if (mockAuditLogs === null) {
+    mockAuditLogs = []
+  }
+}
+
+function appendMockAuditLog(
+  resource: ResourceCard,
+  action: ResourceAuditAction,
+  actor?: ResourceAuditActor
+) {
+  const { actorUserId, actorIdentifier } = normalizeAuditActor(actor)
+  const next: ResourceAuditLogEntry = {
+    id: crypto.randomUUID(),
+    resourceId: resource.id,
+    resourceCategory: resource.category,
+    action,
+    actorUserId,
+    actorIdentifier,
+    createdAt: new Date().toISOString(),
+  }
+
+  mockAuditLogs = [next, ...(mockAuditLogs ?? [])]
 }
 
 export function resetMockStoreForTests() {
   mockStore = null
+  mockAuditLogs = null
 }
 
 export async function hasAnyMockResources(): Promise<boolean> {
@@ -45,6 +94,15 @@ export async function listMockResources(): Promise<ResourceCard[]> {
 export async function listMockResourcesIncludingDeleted(): Promise<ResourceCard[]> {
   ensureMockStore()
   return (mockStore ?? []).map(cloneResource)
+}
+
+export async function listMockResourceAuditLogs(
+  limit = 200
+): Promise<ResourceAuditLogEntry[]> {
+  ensureMockStore()
+  const boundedLimit = Math.max(1, Math.min(limit, 500))
+
+  return (mockAuditLogs ?? []).slice(0, boundedLimit).map(cloneAuditLog)
 }
 
 export async function createMockResource(input: ResourceInput): Promise<ResourceCard> {
@@ -101,7 +159,10 @@ export async function updateMockResource(
   return cloneResource(updated)
 }
 
-export async function deleteMockResource(id: string): Promise<void> {
+export async function deleteMockResource(
+  id: string,
+  actor?: ResourceAuditActor
+): Promise<void> {
   ensureMockStore()
 
   const index = (mockStore ?? []).findIndex(
@@ -118,9 +179,14 @@ export async function deleteMockResource(id: string): Promise<void> {
     deletedAt: new Date().toISOString(),
   }
   mockStore = next
+
+  appendMockAuditLog(next[index], "archived", actor)
 }
 
-export async function restoreMockResource(id: string): Promise<ResourceCard> {
+export async function restoreMockResource(
+  id: string,
+  actor?: ResourceAuditActor
+): Promise<ResourceCard> {
   ensureMockStore()
 
   const index = (mockStore ?? []).findIndex(
@@ -137,6 +203,8 @@ export async function restoreMockResource(id: string): Promise<ResourceCard> {
     deletedAt: null,
   }
   mockStore = next
+
+  appendMockAuditLog(next[index], "restored", actor)
 
   return cloneResource(next[index])
 }

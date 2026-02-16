@@ -121,6 +121,32 @@ export async function ensureSchema() {
       ON app_users (is_first_admin)
       WHERE is_first_admin = true
     `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS resource_audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        resource_id UUID NOT NULL REFERENCES resource_cards(id) ON DELETE CASCADE,
+        action TEXT NOT NULL CHECK (action IN ('archived', 'restored')),
+        actor_user_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+        actor_identifier TEXT NOT NULL CHECK (char_length(actor_identifier) <= 320),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_audit_logs_created_at_idx
+      ON resource_audit_logs (created_at DESC)
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_audit_logs_resource_id_created_at_idx
+      ON resource_audit_logs (resource_id, created_at DESC)
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_audit_logs_actor_user_id_created_at_idx
+      ON resource_audit_logs (actor_user_id, created_at DESC)
+    `
   })()
 
   await schemaReady

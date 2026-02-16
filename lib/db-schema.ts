@@ -83,6 +83,43 @@ export const appUsers = pgTable(
   ]
 )
 
+export const resourceAuditLogs = pgTable(
+  "resource_audit_logs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    resourceId: uuid("resource_id")
+      .notNull()
+      .references(() => resourceCards.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    actorUserId: uuid("actor_user_id").references(() => appUsers.id, {
+      onDelete: "set null",
+    }),
+    actorIdentifier: text("actor_identifier").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "resource_audit_logs_action_check",
+      sql`${table.action} IN ('archived', 'restored')`
+    ),
+    check(
+      "resource_audit_logs_actor_identifier_length_check",
+      sql`char_length(${table.actorIdentifier}) <= 320`
+    ),
+    index("resource_audit_logs_created_at_idx").on(table.createdAt),
+    index("resource_audit_logs_resource_id_created_at_idx").on(
+      table.resourceId,
+      table.createdAt
+    ),
+    index("resource_audit_logs_actor_user_id_created_at_idx").on(
+      table.actorUserId,
+      table.createdAt
+    ),
+  ]
+)
+
 export const resourceCardsRelations = relations(resourceCards, ({ many }) => ({
   links: many(resourceLinks),
 }))

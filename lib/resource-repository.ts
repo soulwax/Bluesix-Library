@@ -2,9 +2,15 @@ import "server-only"
 
 import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
 
-import { resourceCards, resourceLinks } from "@/lib/db-schema"
+import { resourceAuditLogs, resourceCards, resourceLinks } from "@/lib/db-schema"
 import { ensureSchema, getDb } from "@/lib/db"
-import type { ResourceCard, ResourceInput } from "@/lib/resources"
+import type {
+  ResourceAuditAction,
+  ResourceAuditActor,
+  ResourceAuditLogEntry,
+  ResourceCard,
+  ResourceInput,
+} from "@/lib/resources"
 
 export class ResourceNotFoundError extends Error {
   constructor(id: string) {
@@ -23,6 +29,16 @@ interface ResourceJoinRow {
   linkNote: string | null
 }
 
+interface ResourceAuditJoinRow {
+  logId: string
+  logResourceId: string
+  logAction: string
+  logActorUserId: string | null
+  logActorIdentifier: string
+  logCreatedAt: Date | string
+  resourceCategory: string
+}
+
 function normalizeTimestamp(value: Date | string | null): string | null {
   if (!value) {
     return null
@@ -33,6 +49,40 @@ function normalizeTimestamp(value: Date | string | null): string | null {
   }
 
   return value
+}
+
+function normalizeAuditAction(value: string): ResourceAuditAction {
+  return value === "restored" ? "restored" : "archived"
+}
+
+function normalizeAuditActor(actor?: ResourceAuditActor): {
+  actorUserId: string | null
+  actorIdentifier: string
+} {
+  const actorUserId = actor?.userId?.trim() || null
+  const normalizedIdentifier = actor?.identifier?.trim().toLowerCase()
+  const fallbackIdentifier = actorUserId ?? "unknown"
+
+  return {
+    actorUserId,
+    actorIdentifier: (normalizedIdentifier || fallbackIdentifier).slice(0, 320),
+  }
+}
+
+async function appendAuditLog(
+  resourceId: string,
+  action: ResourceAuditAction,
+  actor?: ResourceAuditActor
+) {
+  const db = getDb()
+  const { actorUserId, actorIdentifier } = normalizeAuditActor(actor)
+
+  await db.insert(resourceAuditLogs).values({
+    resourceId,
+    action,
+    actorUserId,
+    actorIdentifier,
+  })
 }
 
 function mapRowsToResources(rows: ResourceJoinRow[]): ResourceCard[] {
@@ -147,6 +197,39 @@ export async function listResourcesIncludingDeleted(): Promise<ResourceCard[]> {
   return mapRowsToResources(rows)
 }
 
+export async function listResourceAuditLogs(
+  limit = 200
+): Promise<ResourceAuditLogEntry[]> {
+  await ensureSchema()
+  const db = getDb()
+  const boundedLimit = Math.max(1, Math.min(limit, 500))
+
+  const rows = await db
+    .select({
+      logId: resourceAuditLogs.id,
+      logResourceId: resourceAuditLogs.resourceId,
+      logAction: resourceAuditLogs.action,
+      logActorUserId: resourceAuditLogs.actorUserId,
+      logActorIdentifier: resourceAuditLogs.actorIdentifier,
+      logCreatedAt: resourceAuditLogs.createdAt,
+      resourceCategory: resourceCards.category,
+    })
+    .from(resourceAuditLogs)
+    .innerJoin(resourceCards, eq(resourceAuditLogs.resourceId, resourceCards.id))
+    .orderBy(desc(resourceAuditLogs.createdAt))
+    .limit(boundedLimit)
+
+  return (rows as ResourceAuditJoinRow[]).map((row) => ({
+    id: row.logId,
+    resourceId: row.logResourceId,
+    resourceCategory: row.resourceCategory,
+    action: normalizeAuditAction(row.logAction),
+    actorUserId: row.logActorUserId,
+    actorIdentifier: row.logActorIdentifier,
+    createdAt: normalizeTimestamp(row.logCreatedAt) ?? new Date(0).toISOString(),
+  }))
+}
+
 export async function createResource(input: ResourceInput): Promise<ResourceCard> {
   await ensureSchema()
   const db = getDb()
@@ -229,7 +312,10 @@ export async function updateResource(
   return resource
 }
 
-export async function deleteResource(id: string): Promise<void> {
+export async function deleteResource(
+  id: string,
+  actor?: ResourceAuditActor
+): Promise<void> {
   await ensureSchema()
   const db = getDb()
 
@@ -242,12 +328,18 @@ export async function deleteResource(id: string): Promise<void> {
     .where(and(eq(resourceCards.id, id), isNull(resourceCards.deletedAt)))
     .returning({ id: resourceCards.id })
 
-  if (rows.length === 0) {
+  const archived = rows[0]
+  if (!archived) {
     throw new ResourceNotFoundError(id)
   }
+
+  await appendAuditLog(archived.id, "archived", actor)
 }
 
-export async function restoreResource(id: string): Promise<ResourceCard> {
+export async function restoreResource(
+  id: string,
+  actor?: ResourceAuditActor
+): Promise<ResourceCard> {
   await ensureSchema()
   const db = getDb()
 
@@ -260,9 +352,12 @@ export async function restoreResource(id: string): Promise<ResourceCard> {
     .where(and(eq(resourceCards.id, id), isNotNull(resourceCards.deletedAt)))
     .returning({ id: resourceCards.id })
 
-  if (rows.length === 0) {
+  const restored = rows[0]
+  if (!restored) {
     throw new ResourceNotFoundError(id)
   }
+
+  await appendAuditLog(restored.id, "restored", actor)
 
   const resource = await findResourceById(id, { includeDeleted: false })
   if (!resource) {
