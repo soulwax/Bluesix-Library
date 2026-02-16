@@ -1,12 +1,9 @@
 import "server-only"
 
-import { ensureSchema, getSql } from "@/lib/db"
+import { sql } from "drizzle-orm"
 
-interface AuthUserRow {
-  id: string
-  email: string
-  password_hash: string
-}
+import { appUsers } from "@/lib/db-schema"
+import { ensureSchema, getDb } from "@/lib/db"
 
 export interface AuthUserRecord {
   id: string
@@ -25,8 +22,36 @@ function normalizeRow(row: AuthUserRow): AuthUserRecord {
   return {
     id: row.id,
     email: row.email,
-    passwordHash: row.password_hash,
+    passwordHash: row.passwordHash,
   }
+}
+
+type AuthUserRow = {
+  id: string
+  email: string
+  passwordHash: string
+}
+
+function readErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) {
+    return null
+  }
+
+  if ("code" in error && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code
+  }
+
+  if (
+    "cause" in error &&
+    typeof (error as { cause?: unknown }).cause === "object" &&
+    (error as { cause?: unknown }).cause !== null &&
+    "code" in (error as { cause: { code?: unknown } }).cause &&
+    typeof (error as { cause: { code?: unknown } }).cause.code === "string"
+  ) {
+    return (error as { cause: { code: string } }).cause.code
+  }
+
+  return null
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -34,25 +59,24 @@ function isUniqueViolation(error: unknown): boolean {
     return false
   }
 
-  return (
-    "code" in error &&
-    typeof (error as { code?: unknown }).code === "string" &&
-    (error as { code: string }).code === "23505"
-  )
+  return readErrorCode(error) === "23505"
 }
 
 export async function findUserByEmail(
   email: string
 ): Promise<AuthUserRecord | null> {
   await ensureSchema()
-  const sql = getSql()
+  const db = getDb()
 
-  const rows = (await sql`
-    SELECT id, email, password_hash
-    FROM app_users
-    WHERE lower(email) = lower(${email})
-    LIMIT 1
-  `) as AuthUserRow[]
+  const rows = await db
+    .select({
+      id: appUsers.id,
+      email: appUsers.email,
+      passwordHash: appUsers.passwordHash,
+    })
+    .from(appUsers)
+    .where(sql`lower(${appUsers.email}) = ${email.toLowerCase()}`)
+    .limit(1)
 
   if (rows.length === 0) {
     return null
@@ -66,14 +90,24 @@ export async function createUser(
   passwordHash: string
 ): Promise<AuthUserRecord> {
   await ensureSchema()
-  const sql = getSql()
+  const db = getDb()
 
   try {
-    const rows = (await sql`
-      INSERT INTO app_users (email, password_hash)
-      VALUES (${email.toLowerCase()}, ${passwordHash})
-      RETURNING id, email, password_hash
-    `) as AuthUserRow[]
+    const rows = await db
+      .insert(appUsers)
+      .values({
+        email: email.toLowerCase(),
+        passwordHash,
+      })
+      .returning({
+        id: appUsers.id,
+        email: appUsers.email,
+        passwordHash: appUsers.passwordHash,
+      })
+
+    if (rows.length === 0) {
+      throw new Error("Failed to insert app user.")
+    }
 
     return normalizeRow(rows[0])
   } catch (error) {

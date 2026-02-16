@@ -1,15 +1,10 @@
 import "server-only"
 
-import { ensureSchema, getSql } from "@/lib/db"
-import type { ResourceCard, ResourceInput, ResourceLink } from "@/lib/resources"
+import { asc, desc, eq, sql } from "drizzle-orm"
 
-interface ResourceRow {
-  id: string
-  category: string
-  links: ResourceLink[] | null
-}
-
-interface ResourceWriteRow extends ResourceRow {}
+import { resourceCards, resourceLinks } from "@/lib/db-schema"
+import { ensureSchema, getDb } from "@/lib/db"
+import type { ResourceCard, ResourceInput } from "@/lib/resources"
 
 export class ResourceNotFoundError extends Error {
   constructor(id: string) {
@@ -18,105 +13,122 @@ export class ResourceNotFoundError extends Error {
   }
 }
 
-interface DbWriteLink {
-  url: string
-  label: string
-  note: string | null
-  position: number
+interface ResourceJoinRow {
+  resourceId: string
+  resourceCategory: string
+  linkId: string | null
+  linkUrl: string | null
+  linkLabel: string | null
+  linkNote: string | null
 }
 
-function toDbWriteLinks(links: ResourceInput["links"]): DbWriteLink[] {
-  return links.map((link, position) => ({
-    url: link.url,
-    label: link.label,
-    note: link.note ?? null,
-    position,
-  }))
-}
+function mapRowsToResources(rows: ResourceJoinRow[]): ResourceCard[] {
+  const resourcesById = new Map<string, ResourceCard>()
+  const orderedResources: ResourceCard[] = []
 
-function normalizeRow(row: ResourceRow): ResourceCard {
-  return {
-    id: row.id,
-    category: row.category,
-    links: row.links ?? [],
+  for (const row of rows) {
+    let resource = resourcesById.get(row.resourceId)
+
+    if (!resource) {
+      resource = {
+        id: row.resourceId,
+        category: row.resourceCategory,
+        links: [],
+      }
+      resourcesById.set(row.resourceId, resource)
+      orderedResources.push(resource)
+    }
+
+    if (row.linkId && row.linkUrl && row.linkLabel) {
+      resource.links.push({
+        id: row.linkId,
+        url: row.linkUrl,
+        label: row.linkLabel,
+        note: row.linkNote,
+      })
+    }
   }
+
+  return orderedResources
+}
+
+async function findResourceById(id: string): Promise<ResourceCard | null> {
+  const db = getDb()
+
+  const rows = await db
+    .select({
+      resourceId: resourceCards.id,
+      resourceCategory: resourceCards.category,
+      linkId: resourceLinks.id,
+      linkUrl: resourceLinks.url,
+      linkLabel: resourceLinks.label,
+      linkNote: resourceLinks.note,
+    })
+    .from(resourceCards)
+    .leftJoin(resourceLinks, eq(resourceCards.id, resourceLinks.resourceId))
+    .where(eq(resourceCards.id, id))
+    .orderBy(asc(resourceLinks.position))
+
+  const resources = mapRowsToResources(rows)
+  return resources[0] ?? null
 }
 
 export async function listResources(): Promise<ResourceCard[]> {
   await ensureSchema()
-  const sql = getSql()
+  const db = getDb()
 
-  const rows = (await sql`
-    SELECT
-      rc.id,
-      rc.category,
-      COALESCE(
-        json_agg(
-          json_build_object(
-            'id', rl.id,
-            'url', rl.url,
-            'label', rl.label,
-            'note', rl.note
-          )
-          ORDER BY rl.position
-        ) FILTER (WHERE rl.id IS NOT NULL),
-        '[]'::json
-      ) AS links
-    FROM resource_cards rc
-    LEFT JOIN resource_links rl ON rc.id = rl.resource_id
-    GROUP BY rc.id, rc.category, rc.created_at
-    ORDER BY rc.created_at DESC
-  `) as ResourceRow[]
+  const rows = await db
+    .select({
+      resourceId: resourceCards.id,
+      resourceCategory: resourceCards.category,
+      linkId: resourceLinks.id,
+      linkUrl: resourceLinks.url,
+      linkLabel: resourceLinks.label,
+      linkNote: resourceLinks.note,
+    })
+    .from(resourceCards)
+    .leftJoin(resourceLinks, eq(resourceCards.id, resourceLinks.resourceId))
+    .orderBy(desc(resourceCards.createdAt), asc(resourceLinks.position))
 
-  return rows.map(normalizeRow)
+  return mapRowsToResources(rows)
 }
 
 export async function createResource(input: ResourceInput): Promise<ResourceCard> {
   await ensureSchema()
-  const sql = getSql()
+  const db = getDb()
 
-  const linksJson = JSON.stringify(toDbWriteLinks(input.links))
+  const insertedCards = await db
+    .insert(resourceCards)
+    .values({
+      category: input.category,
+    })
+    .returning({
+      id: resourceCards.id,
+    })
 
-  const rows = (await sql`
-    WITH new_card AS (
-      INSERT INTO resource_cards (category)
-      VALUES (${input.category})
-      RETURNING id, category
-    ),
-    inserted_links AS (
-      INSERT INTO resource_links (resource_id, url, label, note, position)
-      SELECT
-        nc.id,
-        l.url,
-        l.label,
-        l.note,
-        l.position
-      FROM new_card nc,
-      jsonb_to_recordset(${linksJson}::jsonb)
-      AS l(url text, label text, note text, position integer)
-      RETURNING id, url, label, note, position
+  const createdCard = insertedCards[0]
+  if (!createdCard) {
+    throw new Error("Failed to create resource card.")
+  }
+
+  if (input.links.length > 0) {
+    await db.insert(resourceLinks).values(
+      input.links.map((link, position) => ({
+        resourceId: createdCard.id,
+        url: link.url,
+        label: link.label,
+        note: link.note ?? null,
+        position,
+      }))
     )
-    SELECT
-      nc.id,
-      nc.category,
-      COALESCE(
-        json_agg(
-          json_build_object(
-            'id', il.id,
-            'url', il.url,
-            'label', il.label,
-            'note', il.note
-          )
-          ORDER BY il.position
-        ),
-        '[]'::json
-      ) AS links
-    FROM new_card nc
-    LEFT JOIN inserted_links il ON TRUE
-    GROUP BY nc.id, nc.category
-  `) as ResourceWriteRow[]
+  }
 
-  return normalizeRow(rows[0])
+  const resource = await findResourceById(createdCard.id)
+  if (!resource) {
+    throw new Error("Failed to read created resource card.")
+  }
+
+  return resource
 }
 
 export async function updateResource(
@@ -124,70 +136,53 @@ export async function updateResource(
   input: ResourceInput
 ): Promise<ResourceCard> {
   await ensureSchema()
-  const sql = getSql()
+  const db = getDb()
 
-  const linksJson = JSON.stringify(toDbWriteLinks(input.links))
+  const updatedCards = await db
+    .update(resourceCards)
+    .set({
+      category: input.category,
+      updatedAt: sql`NOW()`,
+    })
+    .where(eq(resourceCards.id, id))
+    .returning({
+      id: resourceCards.id,
+    })
 
-  const rows = (await sql`
-    WITH updated_card AS (
-      UPDATE resource_cards
-      SET category = ${input.category}, updated_at = NOW()
-      WHERE id = ${id}::uuid
-      RETURNING id, category
-    ),
-    deleted_links AS (
-      DELETE FROM resource_links
-      WHERE resource_id IN (SELECT id FROM updated_card)
-    ),
-    inserted_links AS (
-      INSERT INTO resource_links (resource_id, url, label, note, position)
-      SELECT
-        uc.id,
-        l.url,
-        l.label,
-        l.note,
-        l.position
-      FROM updated_card uc,
-      jsonb_to_recordset(${linksJson}::jsonb)
-      AS l(url text, label text, note text, position integer)
-      RETURNING id, url, label, note, position
-    )
-    SELECT
-      uc.id,
-      uc.category,
-      COALESCE(
-        json_agg(
-          json_build_object(
-            'id', il.id,
-            'url', il.url,
-            'label', il.label,
-            'note', il.note
-          )
-          ORDER BY il.position
-        ),
-        '[]'::json
-      ) AS links
-    FROM updated_card uc
-    LEFT JOIN inserted_links il ON TRUE
-    GROUP BY uc.id, uc.category
-  `) as ResourceWriteRow[]
-
-  if (rows.length === 0) {
+  if (updatedCards.length === 0) {
     throw new ResourceNotFoundError(id)
   }
 
-  return normalizeRow(rows[0])
+  await db.delete(resourceLinks).where(eq(resourceLinks.resourceId, id))
+
+  if (input.links.length > 0) {
+    await db.insert(resourceLinks).values(
+      input.links.map((link, position) => ({
+        resourceId: id,
+        url: link.url,
+        label: link.label,
+        note: link.note ?? null,
+        position,
+      }))
+    )
+  }
+
+  const resource = await findResourceById(id)
+  if (!resource) {
+    throw new ResourceNotFoundError(id)
+  }
+
+  return resource
 }
 
 export async function deleteResource(id: string): Promise<void> {
   await ensureSchema()
-  const sql = getSql()
+  const db = getDb()
 
-  const rows = (await sql`
-    DELETE FROM resource_cards
-    WHERE id = ${id}::uuid
-    RETURNING id
-  `) as { id: string }[]
+  const rows = await db
+    .delete(resourceCards)
+    .where(eq(resourceCards.id, id))
+    .returning({ id: resourceCards.id })
 
   if (rows.length === 0) {
     throw new ResourceNotFoundError(id)

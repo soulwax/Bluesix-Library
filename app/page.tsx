@@ -25,7 +25,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { BookOpen, FolderOpen, LogIn, LogOut, Menu, Plus, Search, UserPlus } from "lucide-react"
+import {
+  BookOpen,
+  FolderOpen,
+  Github,
+  LogIn,
+  LogOut,
+  Menu,
+  Plus,
+  Search,
+  UserPlus,
+} from "lucide-react"
 import { Toaster, toast } from "sonner"
 
 interface ApiErrorResponse {
@@ -251,6 +261,10 @@ export default function Page() {
     toast.success("Signed out", {
       description: "Resource management actions are now locked.",
     })
+  }, [])
+
+  const handleGitHubSignIn = useCallback(() => {
+    void signIn("github", { callbackUrl: "/" })
   }, [])
 
   const handleSave = useCallback(
@@ -567,6 +581,21 @@ export default function Page() {
                 : "Sign in to unlock add, edit, and delete actions."}
             </DialogDescription>
           </DialogHeader>
+
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            onClick={handleGitHubSignIn}
+            disabled={isAuthSubmitting}
+          >
+            <Github className="h-4 w-4" />
+            Continue with GitHub
+          </Button>
+
+          <p className="text-center text-xs text-muted-foreground">
+            or continue with email and password
+          </p>
 
           <Tabs
             value={authMode}

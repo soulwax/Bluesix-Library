@@ -2,10 +2,14 @@ import "server-only"
 
 import { neon } from "@neondatabase/serverless"
 import type { NeonQueryFunction } from "@neondatabase/serverless"
+import { drizzle } from "drizzle-orm/neon-http"
+import type { NeonHttpDatabase } from "drizzle-orm/neon-http"
 
 import { getDatabaseEnv } from "@/lib/env"
+import * as schema from "@/lib/db-schema"
 
 let sqlClient: NeonQueryFunction<false, false> | null = null
+let dbClient: NeonHttpDatabase<typeof schema> | null = null
 let schemaReady: Promise<void> | null = null
 
 function getSql(): NeonQueryFunction<false, false> {
@@ -18,8 +22,18 @@ function getSql(): NeonQueryFunction<false, false> {
   return sqlClient
 }
 
+export function getDb(): NeonHttpDatabase<typeof schema> {
+  if (dbClient !== null) {
+    return dbClient
+  }
+
+  dbClient = drizzle(getSql(), { schema })
+  return dbClient
+}
+
 export function resetDatabaseClientForTests() {
   sqlClient = null
+  dbClient = null
   schemaReady = null
 }
 
@@ -82,5 +96,3 @@ export async function ensureSchema() {
 
   await schemaReady
 }
-
-export { getSql }
