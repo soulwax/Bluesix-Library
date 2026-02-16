@@ -7,6 +7,7 @@ import { signIn, signOut, useSession } from "next-auth/react"
 import type { ResourceCard, ResourceInput } from "@/lib/resources"
 import { AddResourceModal } from "@/components/add-resource-modal"
 import { CategorySidebar } from "@/components/category-sidebar"
+import { useColorScheme } from "@/components/color-scheme-provider"
 import { ResourceCardItem } from "@/components/resource-card"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Sheet,
   SheetContent,
@@ -25,6 +27,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   BookOpen,
@@ -33,6 +36,7 @@ import {
   LogIn,
   LogOut,
   Menu,
+  Palette,
   Plus,
   Search,
   Settings2,
@@ -118,6 +122,13 @@ export default function Page() {
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false)
   const [promoteIdentifier, setPromoteIdentifier] = useState("")
   const [isPromotingAdmin, setIsPromotingAdmin] = useState(false)
+  const {
+    schemes: colorSchemes,
+    currentSchemeIndex,
+    isLoading: isLoadingColorScheme,
+    isSaving: isSavingColorScheme,
+    setColorSchemeByIndex,
+  } = useColorScheme()
 
   const isAuthenticated = Boolean(session?.user?.id)
   const isAdmin = Boolean(session?.user?.isAdmin)
@@ -176,6 +187,8 @@ export default function Page() {
     () => resources.reduce((acc, resource) => acc + resource.links.length, 0),
     [resources]
   )
+  const activeColorScheme =
+    colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null
 
   const fetchResources = useCallback(async () => {
     setIsLoading(true)
@@ -403,6 +416,38 @@ export default function Page() {
       setIsResendingVerification(false)
     }
   }, [authEmail, isResendingVerification])
+
+  const handleColorSchemePreview = useCallback(
+    (value: number[]) => {
+      const index = value[0]
+      if (typeof index !== "number") {
+        return
+      }
+
+      void setColorSchemeByIndex(index, { persist: false })
+    },
+    [setColorSchemeByIndex]
+  )
+
+  const handleColorSchemeCommit = useCallback(
+    (value: number[]) => {
+      const index = value[0]
+      if (typeof index !== "number") {
+        return
+      }
+
+      void (async () => {
+        const saved = await setColorSchemeByIndex(index, { persist: true })
+        if (!saved) {
+          toast.error("Color scheme not saved", {
+            description:
+              "Preview applied locally, but we could not persist your preference.",
+          })
+        }
+      })()
+    },
+    [setColorSchemeByIndex]
+  )
 
   const handleSignOut = useCallback(async () => {
     await signOut({ redirect: false })
@@ -662,6 +707,56 @@ export default function Page() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Palette className="h-4 w-4" />
+                <span className="ml-2 hidden sm:inline">Palette</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Color Scheme</p>
+                <p className="text-xs text-muted-foreground">
+                  Popular palettes used in major dev tools. Saved for{" "}
+                  {isAuthenticated ? "your account" : "this visitor"}.
+                </p>
+              </div>
+
+              <div className="rounded-md border border-border/70 bg-card/50 p-3">
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                  <span className="truncate font-medium text-foreground">
+                    {activeColorScheme?.name ?? "Default"}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {currentSchemeIndex + 1}/{colorSchemes.length}
+                  </span>
+                </div>
+
+                <Slider
+                  value={[currentSchemeIndex]}
+                  min={0}
+                  max={Math.max(0, colorSchemes.length - 1)}
+                  step={1}
+                  onValueChange={handleColorSchemePreview}
+                  onValueCommit={handleColorSchemeCommit}
+                  aria-label="Color scheme selector"
+                />
+
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {activeColorScheme?.description}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {isSavingColorScheme
+                    ? "Saving preference..."
+                    : isLoadingColorScheme
+                      ? "Loading preference..."
+                      : "Preference synced with database."}
+                </p>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {sessionStatus === "loading" ? (
             <span className="text-xs text-muted-foreground">Checking auth...</span>
           ) : isAuthenticated ? (

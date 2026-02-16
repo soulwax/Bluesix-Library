@@ -109,6 +109,35 @@ export const emailVerificationTokens = pgTable(
   ]
 )
 
+export const colorSchemePreferences = pgTable(
+  "color_scheme_preferences",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").references(() => appUsers.id, { onDelete: "cascade" }),
+    visitorId: uuid("visitor_id"),
+    colorScheme: text("color_scheme").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "color_scheme_preferences_color_scheme_length_check",
+      sql`char_length(${table.colorScheme}) <= 64`
+    ),
+    check(
+      "color_scheme_preferences_target_check",
+      sql`${table.userId} IS NOT NULL OR ${table.visitorId} IS NOT NULL`
+    ),
+    uniqueIndex("color_scheme_preferences_user_id_idx").on(table.userId),
+    uniqueIndex("color_scheme_preferences_visitor_id_idx").on(table.visitorId),
+    index("color_scheme_preferences_updated_at_idx").on(table.updatedAt),
+  ]
+)
+
 export const resourceAuditLogs = pgTable(
   "resource_audit_logs",
   {

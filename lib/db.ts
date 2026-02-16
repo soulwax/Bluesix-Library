@@ -154,6 +154,34 @@ export async function ensureSchema() {
     `
 
     await sql`
+      CREATE TABLE IF NOT EXISTS color_scheme_preferences (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES app_users(id) ON DELETE CASCADE,
+        visitor_id UUID,
+        color_scheme TEXT NOT NULL CHECK (char_length(color_scheme) <= 64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT color_scheme_preferences_target_check
+          CHECK (user_id IS NOT NULL OR visitor_id IS NOT NULL)
+      )
+    `
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS color_scheme_preferences_user_id_idx
+      ON color_scheme_preferences (user_id)
+    `
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS color_scheme_preferences_visitor_id_idx
+      ON color_scheme_preferences (visitor_id)
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS color_scheme_preferences_updated_at_idx
+      ON color_scheme_preferences (updated_at DESC)
+    `
+
+    await sql`
       CREATE TABLE IF NOT EXISTS resource_audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         resource_id UUID NOT NULL REFERENCES resource_cards(id) ON DELETE CASCADE,
