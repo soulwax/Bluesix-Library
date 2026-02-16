@@ -1024,14 +1024,26 @@ export default function Page() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <BookOpen className="h-4 w-4" />
           </div>
-          <div className="hidden sm:block">
-            <h1 className="text-base font-semibold leading-tight text-foreground">
-              Knowledge
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {resources.length} cards &middot; {totalLinks} links
-              {dataMode === "mock" ? " · mock mode" : ""}
-            </p>
+          <div className="hidden items-start gap-2.5 sm:flex">
+            <div>
+              <h1 className="text-base font-semibold leading-tight text-foreground">
+                Knowledge
+              </h1>
+              {isAuthenticated && session?.user?.email ? (
+                <span className="mt-1 inline-flex max-w-56 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
+                  <span className="truncate">{session.user.email}</span>
+                </span>
+              ) : null}
+            </div>
+            <div className="inline-flex flex-col rounded-xl border border-border bg-secondary/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+              <span>{resources.length} cards</span>
+              <span>{totalLinks} links</span>
+              {dataMode === "mock" ? (
+                <span className="text-[10px] uppercase tracking-wide text-amber-600">
+                  mock mode
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -1106,9 +1118,6 @@ export default function Page() {
             </span>
           ) : isAuthenticated ? (
             <>
-              <span className="hidden max-w-48 truncate text-xs text-muted-foreground md:inline">
-                {session?.user?.email}
-              </span>
               <span className="hidden rounded-md bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-secondary-foreground sm:inline">
                 {isFirstAdmin ? "FirstAdmin" : isAdmin ? "Admin" : "Viewer"}
               </span>
