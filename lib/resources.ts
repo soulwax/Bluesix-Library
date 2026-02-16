@@ -8,6 +8,7 @@ export interface ResourceLink {
 export interface ResourceCard {
   id: string
   category: string
+  tags: string[]
   links: ResourceLink[]
   deletedAt?: string | null
 }
@@ -15,6 +16,7 @@ export interface ResourceCard {
 export interface ResourceCategory {
   id: string
   name: string
+  symbol?: string | null
   createdAt?: string
   updatedAt?: string
 }
@@ -44,6 +46,7 @@ export interface ResourceLinkInput {
 
 export interface ResourceInput {
   category: string
+  tags: string[]
   links: ResourceLinkInput[]
 }
 

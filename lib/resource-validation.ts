@@ -10,6 +10,7 @@ const resourceLinkSchema = z.object({
 
 const resourceInputSchema = z.object({
   category: z.string().trim().min(1).max(80),
+  tags: z.array(z.string().trim().min(1).max(40)).max(24).optional(),
   links: z.array(resourceLinkSchema).min(1).max(100),
 })
 
@@ -54,11 +55,34 @@ function normalizeLink(link: ResourceLinkInput): ResourceLinkInput {
   }
 }
 
+function normalizeTag(rawTag: string): string {
+  return normalizeWhitespace(rawTag)
+}
+
 export function parseResourceInput(payload: unknown): ResourceInput {
   const parsed = resourceInputSchema.parse(payload)
+  const tags = parsed.tags ?? []
+  const seen = new Set<string>()
+  const normalizedTags: string[] = []
+
+  for (const tag of tags) {
+    const normalizedTag = normalizeTag(tag)
+    if (!normalizedTag) {
+      continue
+    }
+
+    const key = normalizedTag.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    normalizedTags.push(normalizedTag)
+  }
 
   return {
     category: normalizeWhitespace(parsed.category),
+    tags: normalizedTags,
     links: parsed.links.map(normalizeLink),
   }
 }

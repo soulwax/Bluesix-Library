@@ -3,10 +3,12 @@
 import type { ResourceCard } from "@/lib/resources"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { getTagToneClasses } from "@/lib/tag-styles"
 import { ExternalLink, Pencil, Trash2 } from "lucide-react"
 
 interface ResourceCardProps {
   resource: ResourceCard
+  categorySymbol?: string | null
   onDelete: (id: string) => void
   onEdit: (resource: ResourceCard) => void
   isDeleting?: boolean
@@ -15,6 +17,7 @@ interface ResourceCardProps {
 
 export function ResourceCardItem({
   resource,
+  categorySymbol,
   onDelete,
   onEdit,
   isDeleting = false,
@@ -24,6 +27,7 @@ export function ResourceCardItem({
     <div className="group flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:shadow-primary/5">
       <div className="mb-3 flex items-center justify-between">
         <Badge variant="secondary" className="font-medium">
+          {categorySymbol ? `${categorySymbol} ` : ""}
           {resource.category}
         </Badge>
         {canManage ? (
@@ -51,6 +55,20 @@ export function ResourceCardItem({
           </div>
         ) : null}
       </div>
+
+      {resource.tags.length > 0 ? (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {resource.tags.map((tag) => (
+            <Badge
+              key={`${resource.id}-${tag}`}
+              variant="outline"
+              className={getTagToneClasses(tag)}
+            >
+              {tag}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
 
       <ul className="flex flex-col gap-2.5" role="list">
         {resource.links.map((link) => (

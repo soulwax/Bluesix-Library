@@ -67,9 +67,15 @@ export async function ensureSchema() {
       CREATE TABLE IF NOT EXISTS resource_categories (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL CHECK (char_length(name) <= 80),
+        symbol TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `
+
+    await sql`
+      ALTER TABLE resource_categories
+      ADD COLUMN IF NOT EXISTS symbol TEXT
     `
 
     await sql`
@@ -94,6 +100,48 @@ export async function ensureSchema() {
       FROM resource_cards
       WHERE trim(category) <> ''
       ON CONFLICT DO NOTHING
+    `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS resource_tags (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL CHECK (char_length(name) <= 40),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS resource_tags_name_lower_idx
+      ON resource_tags ((lower(name)))
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_tags_created_at_idx
+      ON resource_tags (created_at DESC)
+    `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS resource_card_tags (
+        resource_id UUID NOT NULL REFERENCES resource_cards(id) ON DELETE CASCADE,
+        tag_id UUID NOT NULL REFERENCES resource_tags(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_card_tags_resource_id_idx
+      ON resource_card_tags (resource_id)
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_card_tags_tag_id_idx
+      ON resource_card_tags (tag_id)
+    `
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS resource_card_tags_resource_tag_unique_idx
+      ON resource_card_tags (resource_id, tag_id)
     `
 
     await sql`

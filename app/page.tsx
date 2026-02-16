@@ -141,6 +141,7 @@ export default function Page() {
   const [isResendingVerification, setIsResendingVerification] = useState(false)
   const [createCategoryDialogOpen, setCreateCategoryDialogOpen] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState("")
+  const [newCategorySymbol, setNewCategorySymbol] = useState("")
   const [isCategoryMutating, setIsCategoryMutating] = useState(false)
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false)
   const [promoteIdentifier, setPromoteIdentifier] = useState("")
@@ -198,6 +199,20 @@ export default function Page() {
     )
   }, [categoryRecords, resources])
 
+  const categorySymbols = useMemo(() => {
+    const next: Record<string, string | undefined> = {}
+    for (const category of categoryRecords) {
+      const normalized = category.name.trim()
+      if (!normalized) {
+        continue
+      }
+
+      const symbol = category.symbol?.trim()
+      next[normalized] = symbol || undefined
+    }
+    return next
+  }, [categoryRecords])
+
   const filteredResources = useMemo(() => {
     let result = resources
 
@@ -210,6 +225,9 @@ export default function Page() {
       result = result.filter(
         (resource) =>
           resource.category.toLowerCase().includes(normalizedSearchQuery) ||
+          resource.tags.some((tag) =>
+            tag.toLowerCase().includes(normalizedSearchQuery)
+          ) ||
           resource.links.some(
             (link) =>
               link.label.toLowerCase().includes(normalizedSearchQuery) ||
@@ -535,6 +553,7 @@ export default function Page() {
         },
         body: JSON.stringify({
           name: newCategoryName.trim(),
+          symbol: newCategorySymbol.trim() || null,
         }),
       })
       const payload = await readJson<CategoryResponse>(response)
@@ -555,6 +574,7 @@ export default function Page() {
       })
       void fetchCategories()
       setNewCategoryName("")
+      setNewCategorySymbol("")
       setCreateCategoryDialogOpen(false)
       setActiveCategory(createdCategory.name)
 
@@ -569,7 +589,61 @@ export default function Page() {
     } finally {
       setIsCategoryMutating(false)
     }
-  }, [canSubmitCategory, fetchCategories, newCategoryName])
+  }, [canSubmitCategory, fetchCategories, newCategoryName, newCategorySymbol])
+
+  const handleUpdateActiveCategorySymbol = useCallback(async () => {
+    if (!canManageResources || !activeCategoryRecord || activeCategory === "All") {
+      return
+    }
+
+    const nextSymbol = window.prompt(
+      `Set symbol for "${activeCategoryRecord.name}" (leave empty to clear):`,
+      activeCategoryRecord.symbol ?? ""
+    )
+    if (nextSymbol === null) {
+      return
+    }
+
+    setIsCategoryMutating(true)
+    try {
+      const response = await fetch(`/api/categories/${activeCategoryRecord.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          symbol: nextSymbol.trim() || null,
+        }),
+      })
+      const payload = await readJson<CategoryResponse>(response)
+      if (!response.ok || !payload?.category) {
+        throw new Error(payload?.error ?? "Failed to update category symbol.")
+      }
+      const updatedCategory = payload.category
+
+      if (payload.mode) {
+        setDataMode(payload.mode)
+      }
+
+      setCategoryRecords((previous) =>
+        previous.map((category) =>
+          category.id === updatedCategory.id ? updatedCategory : category
+        )
+      )
+      toast.success("Category symbol updated", {
+        description: `${updatedCategory.name} now uses ${updatedCategory.symbol || "no symbol"}.`,
+      })
+    } catch (error) {
+      toast.error("Category symbol update failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not update category symbol.",
+      })
+    } finally {
+      setIsCategoryMutating(false)
+    }
+  }, [activeCategory, activeCategoryRecord, canManageResources])
 
   const handleDeleteActiveCategory = useCallback(async () => {
     if (!canManageResources || !activeCategoryRecord || activeCategory === "All") {
@@ -990,6 +1064,19 @@ export default function Page() {
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => void handleUpdateActiveCategorySymbol()}
+                  disabled={isCategoryMutating}
+                >
+                  <span className="hidden sm:inline">
+                    {activeCategoryRecord.symbol ? "Edit Symbol" : "Set Symbol"}
+                  </span>
+                  <span className="sm:hidden">Symbol</span>
+                </Button>
+              ) : null}
+              {canManageResources && activeCategory !== "All" && activeCategoryRecord ? (
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => void handleDeleteActiveCategory()}
                   disabled={isCategoryMutating}
                 >
@@ -1041,6 +1128,7 @@ export default function Page() {
             activeCategory={activeCategory}
             onCategoryChange={setActiveCategory}
             resourceCounts={resourceCounts}
+            categorySymbols={categorySymbols}
           />
         </aside>
 
@@ -1060,6 +1148,7 @@ export default function Page() {
                 setSidebarOpen(false)
               }}
               resourceCounts={resourceCounts}
+              categorySymbols={categorySymbols}
             />
           </SheetContent>
         </Sheet>
@@ -1124,6 +1213,7 @@ export default function Page() {
                 <ResourceCardItem
                   key={resource.id}
                   resource={resource}
+                  categorySymbol={categorySymbols[resource.category]}
                   onDelete={handleDelete}
                   onEdit={handleEdit}
                   isDeleting={deletingResourceId === resource.id}
@@ -1141,6 +1231,7 @@ export default function Page() {
           setCreateCategoryDialogOpen(open)
           if (!open) {
             setNewCategoryName("")
+            setNewCategorySymbol("")
             setIsCategoryMutating(false)
           }
         }}
@@ -1160,6 +1251,18 @@ export default function Page() {
               value={newCategoryName}
               onChange={(event) => setNewCategoryName(event.target.value)}
               placeholder="e.g. Web Security"
+              disabled={isCategoryMutating}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-category-symbol">Symbol (optional)</Label>
+            <Input
+              id="new-category-symbol"
+              value={newCategorySymbol}
+              onChange={(event) => setNewCategorySymbol(event.target.value)}
+              placeholder="e.g. 🦀"
+              maxLength={16}
               disabled={isCategoryMutating}
             />
           </div>

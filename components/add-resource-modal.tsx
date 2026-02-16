@@ -12,10 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Plus, X } from "lucide-react"
+import { Plus, Tag, X } from "lucide-react"
 
 interface LinkInput {
   url: string
@@ -42,6 +43,8 @@ export function AddResourceModal({
 }: AddResourceModalProps) {
   const [category, setCategory] = useState("")
   const [customCategory, setCustomCategory] = useState("")
+  const [tags, setTags] = useState<string[]>([])
+  const [tagDraft, setTagDraft] = useState("")
   const [links, setLinks] = useState<LinkInput[]>([
     { url: "", label: "", note: "" },
   ])
@@ -62,6 +65,8 @@ export function AddResourceModal({
   const resetForm = useCallback(() => {
     setCategory("")
     setCustomCategory("")
+    setTags([])
+    setTagDraft("")
     setLinks([{ url: "", label: "", note: "" }])
   }, [])
 
@@ -86,6 +91,8 @@ export function AddResourceModal({
         note: link.note ?? "",
       }))
     )
+    setTags([...(editingResource.tags ?? [])])
+    setTagDraft("")
   }, [categoryOptions, editingResource, resetForm])
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -110,6 +117,33 @@ export function AddResourceModal({
     )
   }
 
+  const normalizeTag = (value: string) => value.replace(/\s+/g, " ").trim()
+
+  const addTag = () => {
+    const normalizedTag = normalizeTag(tagDraft)
+    if (!normalizedTag) {
+      return
+    }
+
+    setTags((previous) => {
+      const exists = previous.some(
+        (existing) => existing.toLowerCase() === normalizedTag.toLowerCase()
+      )
+      if (exists) {
+        return previous
+      }
+
+      return [...previous, normalizedTag]
+    })
+    setTagDraft("")
+  }
+
+  const removeTag = (tag: string) => {
+    setTags((previous) =>
+      previous.filter((existing) => existing.toLowerCase() !== tag.toLowerCase())
+    )
+  }
+
   const resolvedCategory =
     category === "__custom__" ? customCategory.trim() : category
 
@@ -127,6 +161,7 @@ export function AddResourceModal({
 
     const resource: ResourceInput = {
       category: resolvedCategory.trim(),
+      tags,
       links: validLinks.map((link) => ({
         url: link.url.trim(),
         label: link.label.trim(),
@@ -180,6 +215,53 @@ export function AddResourceModal({
           </div>
 
           <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="resource-tag-input">Tags (optional)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="resource-tag-input"
+                  placeholder="e.g. TypeScript"
+                  value={tagDraft}
+                  onChange={(event) => setTagDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault()
+                      addTag()
+                    }
+                  }}
+                  disabled={isSaving}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTag}
+                  disabled={isSaving}
+                >
+                  <Tag className="mr-1 h-3.5 w-3.5" />
+                  Add
+                </Button>
+              </div>
+              {tags.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {tags.map((tag) => (
+                    <Badge key={tag} variant="outline" className="gap-1">
+                      {tag}
+                      <button
+                        type="button"
+                        onClick={() => removeTag(tag)}
+                        className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-destructive"
+                        aria-label={`Remove tag ${tag}`}
+                        disabled={isSaving}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
             <div className="flex items-center justify-between">
               <Label>Links</Label>
               <Button

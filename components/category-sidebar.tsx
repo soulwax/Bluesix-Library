@@ -27,6 +27,7 @@ interface CategorySidebarProps {
   activeCategory: string | "All"
   onCategoryChange: (cat: string | "All") => void
   resourceCounts: Record<string, number>
+  categorySymbols?: Record<string, string | undefined>
 }
 
 function resolveCategoryIcon(category: string): LucideIcon {
@@ -51,6 +52,7 @@ export function CategorySidebar({
   activeCategory,
   onCategoryChange,
   resourceCounts,
+  categorySymbols = {},
 }: CategorySidebarProps) {
   const categoryItems = ["All", ...categories.filter((category) => category !== "All")]
 
@@ -63,6 +65,7 @@ export function CategorySidebar({
         {categoryItems.map((cat) => {
           const Icon = resolveCategoryIcon(cat)
           const isActive = activeCategory === cat
+          const symbol = categorySymbols[cat]
           const count = cat === "All"
             ? Object.values(resourceCounts).reduce((a, b) => a + b, 0)
             : resourceCounts[cat] ?? 0
@@ -83,6 +86,9 @@ export function CategorySidebar({
               )}
             >
               <Icon className="h-4 w-4 shrink-0" />
+              {symbol ? (
+                <span className="shrink-0 text-sm leading-none">{symbol}</span>
+              ) : null}
               <span className="truncate">{cat}</span>
               <span
                 className={cn(

@@ -136,6 +136,7 @@ export function parseLibraryMarkdown(markdown: string): ResourceCard[] {
       resources.push({
         id: crypto.randomUUID(),
         category,
+        tags: [],
         links: group,
       })
     })

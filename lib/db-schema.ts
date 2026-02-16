@@ -38,6 +38,7 @@ export const resourceCategories = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     name: text("name").notNull(),
+    symbol: text("symbol"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -49,6 +50,10 @@ export const resourceCategories = pgTable(
     check(
       "resource_categories_name_length_check",
       sql`char_length(${table.name}) <= 80`
+    ),
+    check(
+      "resource_categories_symbol_length_check",
+      sql`${table.symbol} IS NULL OR char_length(${table.symbol}) <= 16`
     ),
     uniqueIndex("resource_categories_name_lower_idx").on(sql`lower(${table.name})`),
     index("resource_categories_created_at_idx").on(table.createdAt),
@@ -80,6 +85,48 @@ export const resourceLinks = pgTable(
     index("resource_links_resource_id_position_idx").on(
       table.resourceId,
       table.position
+    ),
+  ]
+)
+
+export const resourceTags = pgTable(
+  "resource_tags",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check("resource_tags_name_length_check", sql`char_length(${table.name}) <= 40`),
+    uniqueIndex("resource_tags_name_lower_idx").on(sql`lower(${table.name})`),
+    index("resource_tags_created_at_idx").on(table.createdAt),
+  ]
+)
+
+export const resourceCardTags = pgTable(
+  "resource_card_tags",
+  {
+    resourceId: uuid("resource_id")
+      .notNull()
+      .references(() => resourceCards.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => resourceTags.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("resource_card_tags_resource_id_idx").on(table.resourceId),
+    index("resource_card_tags_tag_id_idx").on(table.tagId),
+    uniqueIndex("resource_card_tags_resource_tag_unique_idx").on(
+      table.resourceId,
+      table.tagId
     ),
   ]
 )

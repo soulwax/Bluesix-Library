@@ -27,6 +27,7 @@ function cloneResource(resource: ResourceCard): ResourceCard {
   return {
     id: resource.id,
     category: resource.category,
+    tags: [...(resource.tags ?? [])],
     deletedAt: resource.deletedAt ?? null,
     links: resource.links.map((link) => ({ ...link })),
   }
@@ -72,6 +73,19 @@ function ensureMockCategoryByName(name: string): ResourceCategory {
   return nextCategory
 }
 
+function normalizeCategorySymbol(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const normalized = value.trim()
+  if (!normalized) {
+    return null
+  }
+
+  return normalized.slice(0, 16)
+}
+
 function normalizeAuditActor(actor?: ResourceAuditActor): {
   actorUserId: string | null
   actorIdentifier: string
@@ -90,6 +104,7 @@ function ensureMockStore() {
   if (mockStore === null) {
     mockStore = loadLibraryResourcesFromFile().map((resource) => ({
       ...resource,
+      tags: resource.tags ?? [],
       deletedAt: resource.deletedAt ?? null,
     }))
   }
@@ -168,7 +183,8 @@ export async function listMockResourceCategories(): Promise<ResourceCategory[]> 
 }
 
 export async function createMockResourceCategory(
-  name: string
+  name: string,
+  symbol?: string | null
 ): Promise<ResourceCategory> {
   ensureMockStore()
 
@@ -181,7 +197,33 @@ export async function createMockResourceCategory(
   }
 
   const created = ensureMockCategoryByName(normalizedName)
+  created.symbol = normalizeCategorySymbol(symbol)
+  created.updatedAt = new Date().toISOString()
   return cloneCategory(created)
+}
+
+export async function updateMockResourceCategorySymbol(
+  categoryId: string,
+  symbol: string | null
+): Promise<ResourceCategory> {
+  ensureMockStore()
+
+  const index = (mockCategories ?? []).findIndex(
+    (category) => category.id === categoryId
+  )
+  if (index < 0) {
+    throw new ResourceCategoryNotFoundError(categoryId)
+  }
+
+  const next = [...(mockCategories ?? [])]
+  next[index] = {
+    ...next[index],
+    symbol: normalizeCategorySymbol(symbol),
+    updatedAt: new Date().toISOString(),
+  }
+  mockCategories = next
+
+  return cloneCategory(next[index])
 }
 
 export async function deleteMockResourceCategory(categoryId: string): Promise<{
@@ -244,6 +286,7 @@ export async function createMockResource(input: ResourceInput): Promise<Resource
   const created: ResourceCard = {
     id: crypto.randomUUID(),
     category: category.name,
+    tags: input.tags,
     deletedAt: null,
     links: input.links.map((link) => ({
       id: crypto.randomUUID(),
@@ -277,6 +320,7 @@ export async function updateMockResource(
   const updated: ResourceCard = {
     id,
     category: category.name,
+    tags: input.tags,
     deletedAt: previous.deletedAt ?? null,
     links: input.links.map((link) => ({
       id: crypto.randomUUID(),

@@ -1,12 +1,14 @@
 import "server-only"
 
-import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm"
 
 import {
   resourceAuditLogs,
+  resourceCardTags,
   resourceCards,
   resourceCategories,
   resourceLinks,
+  resourceTags,
 } from "@/lib/db-schema"
 import { ensureSchema, getDb } from "@/lib/db"
 import type {
@@ -45,6 +47,7 @@ export class ResourceCategoryAlreadyExistsError extends Error {
 interface ResourceCategoryRow {
   id: string
   name: string
+  symbol: string | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -69,6 +72,11 @@ interface ResourceAuditJoinRow {
   resourceCategory: string
 }
 
+interface ResourceTagJoinRow {
+  resourceId: string
+  tagName: string
+}
+
 function normalizeTimestamp(value: Date | string | null): string | null {
   if (!value) {
     return null
@@ -89,10 +97,28 @@ function normalizeCategoryName(value: string): string {
   return value.replace(/\s+/g, " ").trim()
 }
 
+function normalizeCategorySymbol(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const normalized = value.trim()
+  if (!normalized) {
+    return null
+  }
+
+  return normalized.slice(0, 16)
+}
+
+function normalizeTagName(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
 function normalizeCategoryRow(row: ResourceCategoryRow): ResourceCategory {
   return {
     id: row.id,
     name: row.name,
+    symbol: row.symbol,
     createdAt: normalizeTimestamp(row.createdAt) ?? new Date(0).toISOString(),
     updatedAt: normalizeTimestamp(row.updatedAt) ?? new Date(0).toISOString(),
   }
@@ -165,6 +191,7 @@ function mapRowsToResources(rows: ResourceJoinRow[]): ResourceCard[] {
       resource = {
         id: row.resourceId,
         category: row.resourceCategory,
+        tags: [],
         deletedAt: normalizeTimestamp(row.resourceDeletedAt),
         links: [],
       }
@@ -183,6 +210,46 @@ function mapRowsToResources(rows: ResourceJoinRow[]): ResourceCard[] {
   }
 
   return orderedResources
+}
+
+async function listTagsForResourceIds(
+  resourceIds: string[]
+): Promise<Map<string, string[]>> {
+  const tagsByResourceId = new Map<string, string[]>()
+  if (resourceIds.length === 0) {
+    return tagsByResourceId
+  }
+
+  const db = getDb()
+  const rows = await db
+    .select({
+      resourceId: resourceCardTags.resourceId,
+      tagName: resourceTags.name,
+    })
+    .from(resourceCardTags)
+    .innerJoin(resourceTags, eq(resourceCardTags.tagId, resourceTags.id))
+    .where(inArray(resourceCardTags.resourceId, resourceIds))
+    .orderBy(
+      asc(resourceCardTags.resourceId),
+      asc(sql`lower(${resourceTags.name})`)
+    )
+
+  for (const row of rows as ResourceTagJoinRow[]) {
+    const existing = tagsByResourceId.get(row.resourceId) ?? []
+    existing.push(row.tagName)
+    tagsByResourceId.set(row.resourceId, existing)
+  }
+
+  return tagsByResourceId
+}
+
+async function attachTags(resources: ResourceCard[]): Promise<ResourceCard[]> {
+  const tagsByResourceId = await listTagsForResourceIds(resources.map((r) => r.id))
+
+  return resources.map((resource) => ({
+    ...resource,
+    tags: tagsByResourceId.get(resource.id) ?? [],
+  }))
 }
 
 async function findResourceById(
@@ -210,7 +277,7 @@ async function findResourceById(
     .where(whereCondition)
     .orderBy(asc(resourceLinks.position))
 
-  const resources = mapRowsToResources(rows)
+  const resources = await attachTags(mapRowsToResources(rows))
   return resources[0] ?? null
 }
 
@@ -233,6 +300,7 @@ async function findCategoryByName(name: string): Promise<ResourceCategory | null
     .select({
       id: resourceCategories.id,
       name: resourceCategories.name,
+      symbol: resourceCategories.symbol,
       createdAt: resourceCategories.createdAt,
       updatedAt: resourceCategories.updatedAt,
     })
@@ -247,9 +315,13 @@ async function findCategoryByName(name: string): Promise<ResourceCategory | null
   return normalizeCategoryRow(rows[0] as ResourceCategoryRow)
 }
 
-async function ensureCategoryByName(name: string): Promise<ResourceCategory> {
+async function ensureCategoryByName(
+  name: string,
+  symbol?: string | null
+): Promise<ResourceCategory> {
   const db = getDb()
   const normalizedName = normalizeCategoryName(name)
+  const normalizedSymbol = normalizeCategorySymbol(symbol)
 
   if (!normalizedName) {
     throw new Error("Category name is required.")
@@ -260,10 +332,12 @@ async function ensureCategoryByName(name: string): Promise<ResourceCategory> {
       .insert(resourceCategories)
       .values({
         name: normalizedName,
+        symbol: normalizedSymbol,
       })
       .returning({
         id: resourceCategories.id,
         name: resourceCategories.name,
+        symbol: resourceCategories.symbol,
         createdAt: resourceCategories.createdAt,
         updatedAt: resourceCategories.updatedAt,
       })
@@ -286,6 +360,80 @@ async function ensureCategoryByName(name: string): Promise<ResourceCategory> {
   return existing
 }
 
+async function ensureTagsByName(tagNames: string[]): Promise<string[]> {
+  const db = getDb()
+  const ids: string[] = []
+  const seen = new Set<string>()
+
+  for (const rawName of tagNames) {
+    const normalizedName = normalizeTagName(rawName)
+    if (!normalizedName) {
+      continue
+    }
+
+    const key = normalizedName.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+
+    try {
+      const inserted = await db
+        .insert(resourceTags)
+        .values({
+          name: normalizedName,
+        })
+        .returning({
+          id: resourceTags.id,
+          name: resourceTags.name,
+        })
+
+      const created = inserted[0]
+      if (created) {
+        ids.push(created.id)
+        continue
+      }
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error
+      }
+    }
+
+    const existingRows = await db
+      .select({
+        id: resourceTags.id,
+      })
+      .from(resourceTags)
+      .where(sql`lower(${resourceTags.name}) = ${normalizedName.toLowerCase()}`)
+      .limit(1)
+
+    const existing = existingRows[0]
+    if (existing) {
+      ids.push(existing.id)
+    }
+  }
+
+  return ids
+}
+
+async function setTagsForResource(resourceId: string, tags: string[]) {
+  const db = getDb()
+
+  await db.delete(resourceCardTags).where(eq(resourceCardTags.resourceId, resourceId))
+
+  const tagIds = await ensureTagsByName(tags)
+  if (tagIds.length === 0) {
+    return
+  }
+
+  await db.insert(resourceCardTags).values(
+    tagIds.map((tagId) => ({
+      resourceId,
+      tagId,
+    }))
+  )
+}
+
 export async function listResourceCategories(): Promise<ResourceCategory[]> {
   await ensureSchema()
   const db = getDb()
@@ -297,6 +445,7 @@ export async function listResourceCategories(): Promise<ResourceCategory[]> {
     .select({
       id: resourceCategories.id,
       name: resourceCategories.name,
+      symbol: resourceCategories.symbol,
       createdAt: resourceCategories.createdAt,
       updatedAt: resourceCategories.updatedAt,
     })
@@ -306,10 +455,14 @@ export async function listResourceCategories(): Promise<ResourceCategory[]> {
   return (rows as ResourceCategoryRow[]).map(normalizeCategoryRow)
 }
 
-export async function createResourceCategory(name: string): Promise<ResourceCategory> {
+export async function createResourceCategory(
+  name: string,
+  symbol?: string | null
+): Promise<ResourceCategory> {
   await ensureSchema()
   const db = getDb()
   const normalizedName = normalizeCategoryName(name)
+  const normalizedSymbol = normalizeCategorySymbol(symbol)
 
   if (!normalizedName) {
     throw new Error("Category name is required.")
@@ -320,10 +473,12 @@ export async function createResourceCategory(name: string): Promise<ResourceCate
       .insert(resourceCategories)
       .values({
         name: normalizedName,
+        symbol: normalizedSymbol,
       })
       .returning({
         id: resourceCategories.id,
         name: resourceCategories.name,
+        symbol: resourceCategories.symbol,
         createdAt: resourceCategories.createdAt,
         updatedAt: resourceCategories.updatedAt,
       })
@@ -343,6 +498,37 @@ export async function createResourceCategory(name: string): Promise<ResourceCate
   }
 }
 
+export async function updateResourceCategorySymbol(
+  categoryId: string,
+  symbol: string | null
+): Promise<ResourceCategory> {
+  await ensureSchema()
+  const db = getDb()
+  const normalizedSymbol = normalizeCategorySymbol(symbol)
+
+  const rows = await db
+    .update(resourceCategories)
+    .set({
+      symbol: normalizedSymbol,
+      updatedAt: sql`NOW()`,
+    })
+    .where(eq(resourceCategories.id, categoryId))
+    .returning({
+      id: resourceCategories.id,
+      name: resourceCategories.name,
+      symbol: resourceCategories.symbol,
+      createdAt: resourceCategories.createdAt,
+      updatedAt: resourceCategories.updatedAt,
+    })
+
+  const updated = rows[0]
+  if (!updated) {
+    throw new ResourceCategoryNotFoundError(categoryId)
+  }
+
+  return normalizeCategoryRow(updated as ResourceCategoryRow)
+}
+
 export async function deleteResourceCategory(
   categoryId: string
 ): Promise<{
@@ -357,6 +543,7 @@ export async function deleteResourceCategory(
     .select({
       id: resourceCategories.id,
       name: resourceCategories.name,
+      symbol: resourceCategories.symbol,
       createdAt: resourceCategories.createdAt,
       updatedAt: resourceCategories.updatedAt,
     })
@@ -424,7 +611,7 @@ export async function listResources(): Promise<ResourceCard[]> {
     .where(isNull(resourceCards.deletedAt))
     .orderBy(desc(resourceCards.createdAt), asc(resourceLinks.position))
 
-  return mapRowsToResources(rows)
+  return attachTags(mapRowsToResources(rows))
 }
 
 export async function listResourcesIncludingDeleted(): Promise<ResourceCard[]> {
@@ -445,7 +632,7 @@ export async function listResourcesIncludingDeleted(): Promise<ResourceCard[]> {
     .leftJoin(resourceLinks, eq(resourceCards.id, resourceLinks.resourceId))
     .orderBy(desc(resourceCards.createdAt), asc(resourceLinks.position))
 
-  return mapRowsToResources(rows)
+  return attachTags(mapRowsToResources(rows))
 }
 
 export async function listResourceAuditLogs(
@@ -514,6 +701,8 @@ export async function createResource(input: ResourceInput): Promise<ResourceCard
     )
   }
 
+  await setTagsForResource(createdCard.id, input.tags)
+
   const resource = await findResourceById(createdCard.id, { includeDeleted: false })
   if (!resource) {
     throw new Error("Failed to read created resource card.")
@@ -560,6 +749,8 @@ export async function updateResource(
       }))
     )
   }
+
+  await setTagsForResource(id, input.tags)
 
   const resource = await findResourceById(id, { includeDeleted: false })
   if (!resource) {

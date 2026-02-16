@@ -13,6 +13,7 @@ import {
   listMockResourceAuditLogs,
   listMockResourcesIncludingDeleted,
   listMockResources,
+  updateMockResourceCategorySymbol,
   restoreMockResource,
   updateMockResource,
 } from "@/lib/mock-resource-store"
@@ -26,6 +27,7 @@ import {
   listResourceAuditLogs as listDbResourceAuditLogs,
   listResourcesIncludingDeleted as listDbResourcesIncludingDeleted,
   listResources as listDbResources,
+  updateResourceCategorySymbol as updateDbResourceCategorySymbol,
   restoreResource as restoreDbResource,
   updateResource as updateDbResource,
 } from "@/lib/resource-repository"
@@ -48,6 +50,7 @@ function currentMode(): ResourceDataMode {
 function toResourceInput(resource: ResourceCard): ResourceInput {
   return {
     category: resource.category,
+    tags: resource.tags ?? [],
     links: resource.links.map((link) => ({
       url: link.url,
       label: link.label,
@@ -131,20 +134,40 @@ export async function listResourceCategoriesService(): Promise<{
 }
 
 export async function createResourceCategoryService(
-  name: string
+  name: string,
+  symbol?: string | null
 ): Promise<{ mode: ResourceDataMode; category: ResourceCategory }> {
   const mode = currentMode()
 
   if (mode === "database") {
     return {
       mode,
-      category: await createDbResourceCategory(name),
+      category: await createDbResourceCategory(name, symbol),
     }
   }
 
   return {
     mode,
-    category: await createMockResourceCategory(name),
+    category: await createMockResourceCategory(name, symbol),
+  }
+}
+
+export async function updateResourceCategorySymbolService(
+  id: string,
+  symbol: string | null
+): Promise<{ mode: ResourceDataMode; category: ResourceCategory }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    return {
+      mode,
+      category: await updateDbResourceCategorySymbol(id, symbol),
+    }
+  }
+
+  return {
+    mode,
+    category: await updateMockResourceCategorySymbol(id, symbol),
   }
 }
 

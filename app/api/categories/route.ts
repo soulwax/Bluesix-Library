@@ -12,6 +12,7 @@ export const runtime = "nodejs"
 
 const createCategorySchema = z.object({
   name: z.string().trim().min(1).max(80),
+  symbol: z.string().trim().max(16).optional().nullable(),
 })
 
 function errorResponse(message: string, status: number) {
@@ -53,7 +54,10 @@ export async function POST(request: Request) {
 
     const payload = await readRequestJson(request)
     const input = createCategorySchema.parse(payload)
-    const { mode, category } = await createResourceCategoryService(input.name)
+    const { mode, category } = await createResourceCategoryService(
+      input.name,
+      input.symbol ?? null
+    )
 
     return NextResponse.json({ mode, category }, { status: 201 })
   } catch (error) {
@@ -74,4 +78,3 @@ export async function POST(request: Request) {
     return errorResponse("Unexpected server error.", 500)
   }
 }
-
