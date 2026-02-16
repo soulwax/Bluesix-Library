@@ -12,6 +12,13 @@ export interface ResourceCard {
   deletedAt?: string | null
 }
 
+export interface ResourceCategory {
+  id: string
+  name: string
+  createdAt?: string
+  updatedAt?: string
+}
+
 export type ResourceAuditAction = "archived" | "restored"
 
 export interface ResourceAuditActor {

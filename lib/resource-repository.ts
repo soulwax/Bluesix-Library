@@ -2,21 +2,51 @@ import "server-only"
 
 import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
 
-import { resourceAuditLogs, resourceCards, resourceLinks } from "@/lib/db-schema"
+import {
+  resourceAuditLogs,
+  resourceCards,
+  resourceCategories,
+  resourceLinks,
+} from "@/lib/db-schema"
 import { ensureSchema, getDb } from "@/lib/db"
 import type {
   ResourceAuditAction,
   ResourceAuditActor,
   ResourceAuditLogEntry,
   ResourceCard,
+  ResourceCategory,
   ResourceInput,
 } from "@/lib/resources"
+
+const DEFAULT_RESOURCE_CATEGORY_NAME = "General"
+const FALLBACK_RESOURCE_CATEGORY_NAME = "Uncategorized"
 
 export class ResourceNotFoundError extends Error {
   constructor(id: string) {
     super(`Resource ${id} was not found.`)
     this.name = "ResourceNotFoundError"
   }
+}
+
+export class ResourceCategoryNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Category ${id} was not found.`)
+    this.name = "ResourceCategoryNotFoundError"
+  }
+}
+
+export class ResourceCategoryAlreadyExistsError extends Error {
+  constructor(name: string) {
+    super(`Category ${name} already exists.`)
+    this.name = "ResourceCategoryAlreadyExistsError"
+  }
+}
+
+interface ResourceCategoryRow {
+  id: string
+  name: string
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 interface ResourceJoinRow {
@@ -53,6 +83,45 @@ function normalizeTimestamp(value: Date | string | null): string | null {
 
 function normalizeAuditAction(value: string): ResourceAuditAction {
   return value === "restored" ? "restored" : "archived"
+}
+
+function normalizeCategoryName(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function normalizeCategoryRow(row: ResourceCategoryRow): ResourceCategory {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: normalizeTimestamp(row.createdAt) ?? new Date(0).toISOString(),
+    updatedAt: normalizeTimestamp(row.updatedAt) ?? new Date(0).toISOString(),
+  }
+}
+
+function readErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) {
+    return null
+  }
+
+  if ("code" in error && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code
+  }
+
+  if (
+    "cause" in error &&
+    typeof (error as { cause?: unknown }).cause === "object" &&
+    (error as { cause?: unknown }).cause !== null &&
+    "code" in (error as { cause: { code?: unknown } }).cause &&
+    typeof (error as { cause: { code?: unknown } }).cause.code === "string"
+  ) {
+    return (error as { cause: { code: string } }).cause.code
+  }
+
+  return null
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return readErrorCode(error) === "23505"
 }
 
 function normalizeAuditActor(actor?: ResourceAuditActor): {
@@ -145,6 +214,188 @@ async function findResourceById(
   return resources[0] ?? null
 }
 
+async function syncCategoriesFromResources() {
+  const db = getDb()
+
+  await db.execute(sql`
+    INSERT INTO resource_categories (name)
+    SELECT DISTINCT trim(category)
+    FROM resource_cards
+    WHERE trim(category) <> ''
+    ON CONFLICT DO NOTHING
+  `)
+}
+
+async function findCategoryByName(name: string): Promise<ResourceCategory | null> {
+  const db = getDb()
+
+  const rows = await db
+    .select({
+      id: resourceCategories.id,
+      name: resourceCategories.name,
+      createdAt: resourceCategories.createdAt,
+      updatedAt: resourceCategories.updatedAt,
+    })
+    .from(resourceCategories)
+    .where(sql`lower(${resourceCategories.name}) = ${name.toLowerCase()}`)
+    .limit(1)
+
+  if (rows.length === 0) {
+    return null
+  }
+
+  return normalizeCategoryRow(rows[0] as ResourceCategoryRow)
+}
+
+async function ensureCategoryByName(name: string): Promise<ResourceCategory> {
+  const db = getDb()
+  const normalizedName = normalizeCategoryName(name)
+
+  if (!normalizedName) {
+    throw new Error("Category name is required.")
+  }
+
+  try {
+    const inserted = await db
+      .insert(resourceCategories)
+      .values({
+        name: normalizedName,
+      })
+      .returning({
+        id: resourceCategories.id,
+        name: resourceCategories.name,
+        createdAt: resourceCategories.createdAt,
+        updatedAt: resourceCategories.updatedAt,
+      })
+
+    const created = inserted[0]
+    if (created) {
+      return normalizeCategoryRow(created as ResourceCategoryRow)
+    }
+  } catch (error) {
+    if (!isUniqueViolation(error)) {
+      throw error
+    }
+  }
+
+  const existing = await findCategoryByName(normalizedName)
+  if (!existing) {
+    throw new Error("Failed to resolve category.")
+  }
+
+  return existing
+}
+
+export async function listResourceCategories(): Promise<ResourceCategory[]> {
+  await ensureSchema()
+  const db = getDb()
+
+  await ensureCategoryByName(DEFAULT_RESOURCE_CATEGORY_NAME)
+  await syncCategoriesFromResources()
+
+  const rows = await db
+    .select({
+      id: resourceCategories.id,
+      name: resourceCategories.name,
+      createdAt: resourceCategories.createdAt,
+      updatedAt: resourceCategories.updatedAt,
+    })
+    .from(resourceCategories)
+    .orderBy(sql`lower(${resourceCategories.name}) asc`)
+
+  return (rows as ResourceCategoryRow[]).map(normalizeCategoryRow)
+}
+
+export async function createResourceCategory(name: string): Promise<ResourceCategory> {
+  await ensureSchema()
+  const db = getDb()
+  const normalizedName = normalizeCategoryName(name)
+
+  if (!normalizedName) {
+    throw new Error("Category name is required.")
+  }
+
+  try {
+    const rows = await db
+      .insert(resourceCategories)
+      .values({
+        name: normalizedName,
+      })
+      .returning({
+        id: resourceCategories.id,
+        name: resourceCategories.name,
+        createdAt: resourceCategories.createdAt,
+        updatedAt: resourceCategories.updatedAt,
+      })
+
+    const created = rows[0]
+    if (!created) {
+      throw new Error("Failed to create category.")
+    }
+
+    return normalizeCategoryRow(created as ResourceCategoryRow)
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ResourceCategoryAlreadyExistsError(normalizedName)
+    }
+
+    throw error
+  }
+}
+
+export async function deleteResourceCategory(
+  categoryId: string
+): Promise<{
+  deletedCategory: ResourceCategory
+  reassignedCategory: ResourceCategory
+  reassignedResources: number
+}> {
+  await ensureSchema()
+  const db = getDb()
+
+  const rows = await db
+    .select({
+      id: resourceCategories.id,
+      name: resourceCategories.name,
+      createdAt: resourceCategories.createdAt,
+      updatedAt: resourceCategories.updatedAt,
+    })
+    .from(resourceCategories)
+    .where(eq(resourceCategories.id, categoryId))
+    .limit(1)
+
+  const existing = rows[0]
+  if (!existing) {
+    throw new ResourceCategoryNotFoundError(categoryId)
+  }
+
+  const deletedCategory = normalizeCategoryRow(existing as ResourceCategoryRow)
+  const normalizedDeletedName = deletedCategory.name.toLowerCase()
+
+  const fallbackName =
+    normalizedDeletedName === DEFAULT_RESOURCE_CATEGORY_NAME.toLowerCase()
+      ? FALLBACK_RESOURCE_CATEGORY_NAME
+      : DEFAULT_RESOURCE_CATEGORY_NAME
+  const reassignedCategory = await ensureCategoryByName(fallbackName)
+
+  const reassigned = await db
+    .update(resourceCards)
+    .set({
+      category: reassignedCategory.name,
+      updatedAt: sql`NOW()`,
+    })
+    .where(sql`lower(${resourceCards.category}) = ${normalizedDeletedName}`)
+    .returning({ id: resourceCards.id })
+
+  await db.delete(resourceCategories).where(eq(resourceCategories.id, categoryId))
+
+  return {
+    deletedCategory,
+    reassignedCategory,
+    reassignedResources: reassigned.length,
+  }
+}
+
 export async function hasAnyResources(): Promise<boolean> {
   await ensureSchema()
   const db = getDb()
@@ -233,11 +484,14 @@ export async function listResourceAuditLogs(
 export async function createResource(input: ResourceInput): Promise<ResourceCard> {
   await ensureSchema()
   const db = getDb()
+  const categoryName = normalizeCategoryName(input.category)
+
+  await ensureCategoryByName(categoryName)
 
   const insertedCards = await db
     .insert(resourceCards)
     .values({
-      category: input.category,
+      category: categoryName,
     })
     .returning({
       id: resourceCards.id,
@@ -274,11 +528,14 @@ export async function updateResource(
 ): Promise<ResourceCard> {
   await ensureSchema()
   const db = getDb()
+  const categoryName = normalizeCategoryName(input.category)
+
+  await ensureCategoryByName(categoryName)
 
   const updatedCards = await db
     .update(resourceCards)
     .set({
-      category: input.category,
+      category: categoryName,
       updatedAt: sql`NOW()`,
     })
     .where(and(eq(resourceCards.id, id), isNull(resourceCards.deletedAt)))

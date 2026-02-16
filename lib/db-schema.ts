@@ -33,6 +33,28 @@ export const resourceCards = pgTable(
   ]
 )
 
+export const resourceCategories = pgTable(
+  "resource_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "resource_categories_name_length_check",
+      sql`char_length(${table.name}) <= 80`
+    ),
+    uniqueIndex("resource_categories_name_lower_idx").on(sql`lower(${table.name})`),
+    index("resource_categories_created_at_idx").on(table.createdAt),
+  ]
+)
+
 export const resourceLinks = pgTable(
   "resource_links",
   {

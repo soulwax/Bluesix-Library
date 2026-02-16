@@ -2,16 +2,26 @@ import "server-only"
 
 import { loadLibraryResourcesFromFile } from "@/lib/library-parser"
 import type {
+  ResourceCategory,
   ResourceAuditAction,
   ResourceAuditActor,
   ResourceAuditLogEntry,
   ResourceCard,
   ResourceInput,
 } from "@/lib/resources"
-import { ResourceNotFoundError } from "@/lib/resource-repository"
+import { DEFAULT_CATEGORY_SUGGESTIONS } from "@/lib/resources"
+import {
+  ResourceCategoryAlreadyExistsError,
+  ResourceCategoryNotFoundError,
+  ResourceNotFoundError,
+} from "@/lib/resource-repository"
 
 let mockStore: ResourceCard[] | null = null
 let mockAuditLogs: ResourceAuditLogEntry[] | null = null
+let mockCategories: ResourceCategory[] | null = null
+
+const DEFAULT_RESOURCE_CATEGORY_NAME = "General"
+const FALLBACK_RESOURCE_CATEGORY_NAME = "Uncategorized"
 
 function cloneResource(resource: ResourceCard): ResourceCard {
   return {
@@ -26,6 +36,40 @@ function cloneAuditLog(log: ResourceAuditLogEntry): ResourceAuditLogEntry {
   return {
     ...log,
   }
+}
+
+function cloneCategory(category: ResourceCategory): ResourceCategory {
+  return {
+    ...category,
+  }
+}
+
+function normalizeCategoryName(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function ensureMockCategoryByName(name: string): ResourceCategory {
+  const normalizedName = normalizeCategoryName(name)
+  if (!normalizedName) {
+    throw new Error("Category name is required.")
+  }
+
+  const existing = (mockCategories ?? []).find(
+    (category) => category.name.toLowerCase() === normalizedName.toLowerCase()
+  )
+  if (existing) {
+    return existing
+  }
+
+  const nextCategory: ResourceCategory = {
+    id: crypto.randomUUID(),
+    name: normalizedName,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  mockCategories = [...(mockCategories ?? []), nextCategory]
+  return nextCategory
 }
 
 function normalizeAuditActor(actor?: ResourceAuditActor): {
@@ -53,6 +97,24 @@ function ensureMockStore() {
   if (mockAuditLogs === null) {
     mockAuditLogs = []
   }
+
+  if (mockCategories === null) {
+    const seedNames = new Set<string>([
+      DEFAULT_RESOURCE_CATEGORY_NAME,
+      ...DEFAULT_CATEGORY_SUGGESTIONS,
+      ...(mockStore ?? []).map((resource) => resource.category),
+    ])
+
+    mockCategories = [...seedNames]
+      .map((name) => normalizeCategoryName(name))
+      .filter((name) => name.length > 0)
+      .map((name) => ({
+        id: crypto.randomUUID(),
+        name,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }))
+  }
 }
 
 function appendMockAuditLog(
@@ -77,6 +139,7 @@ function appendMockAuditLog(
 export function resetMockStoreForTests() {
   mockStore = null
   mockAuditLogs = null
+  mockCategories = null
 }
 
 export async function hasAnyMockResources(): Promise<boolean> {
@@ -96,6 +159,75 @@ export async function listMockResourcesIncludingDeleted(): Promise<ResourceCard[
   return (mockStore ?? []).map(cloneResource)
 }
 
+export async function listMockResourceCategories(): Promise<ResourceCategory[]> {
+  ensureMockStore()
+
+  return [...(mockCategories ?? [])]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(cloneCategory)
+}
+
+export async function createMockResourceCategory(
+  name: string
+): Promise<ResourceCategory> {
+  ensureMockStore()
+
+  const normalizedName = normalizeCategoryName(name)
+  const existing = (mockCategories ?? []).find(
+    (category) => category.name.toLowerCase() === normalizedName.toLowerCase()
+  )
+  if (existing) {
+    throw new ResourceCategoryAlreadyExistsError(normalizedName)
+  }
+
+  const created = ensureMockCategoryByName(normalizedName)
+  return cloneCategory(created)
+}
+
+export async function deleteMockResourceCategory(categoryId: string): Promise<{
+  deletedCategory: ResourceCategory
+  reassignedCategory: ResourceCategory
+  reassignedResources: number
+}> {
+  ensureMockStore()
+
+  const existing = (mockCategories ?? []).find(
+    (category) => category.id === categoryId
+  )
+  if (!existing) {
+    throw new ResourceCategoryNotFoundError(categoryId)
+  }
+
+  const fallbackName =
+    existing.name.toLowerCase() === DEFAULT_RESOURCE_CATEGORY_NAME.toLowerCase()
+      ? FALLBACK_RESOURCE_CATEGORY_NAME
+      : DEFAULT_RESOURCE_CATEGORY_NAME
+  const reassignedCategory = ensureMockCategoryByName(fallbackName)
+
+  let reassignedResources = 0
+  mockStore = (mockStore ?? []).map((resource) => {
+    if (resource.category.toLowerCase() !== existing.name.toLowerCase()) {
+      return resource
+    }
+
+    reassignedResources += 1
+    return {
+      ...resource,
+      category: reassignedCategory.name,
+    }
+  })
+
+  mockCategories = (mockCategories ?? []).filter(
+    (category) => category.id !== categoryId
+  )
+
+  return {
+    deletedCategory: cloneCategory(existing),
+    reassignedCategory: cloneCategory(reassignedCategory),
+    reassignedResources,
+  }
+}
+
 export async function listMockResourceAuditLogs(
   limit = 200
 ): Promise<ResourceAuditLogEntry[]> {
@@ -107,10 +239,11 @@ export async function listMockResourceAuditLogs(
 
 export async function createMockResource(input: ResourceInput): Promise<ResourceCard> {
   ensureMockStore()
+  const category = ensureMockCategoryByName(input.category)
 
   const created: ResourceCard = {
     id: crypto.randomUUID(),
-    category: input.category,
+    category: category.name,
     deletedAt: null,
     links: input.links.map((link) => ({
       id: crypto.randomUUID(),
@@ -129,6 +262,7 @@ export async function updateMockResource(
   input: ResourceInput
 ): Promise<ResourceCard> {
   ensureMockStore()
+  const category = ensureMockCategoryByName(input.category)
 
   const index = (mockStore ?? []).findIndex(
     (resource) => resource.id === id && !resource.deletedAt
@@ -142,7 +276,7 @@ export async function updateMockResource(
 
   const updated: ResourceCard = {
     id,
-    category: input.category,
+    category: category.name,
     deletedAt: previous.deletedAt ?? null,
     links: input.links.map((link) => ({
       id: crypto.randomUUID(),

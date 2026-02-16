@@ -64,6 +64,39 @@ export async function ensureSchema() {
     `
 
     await sql`
+      CREATE TABLE IF NOT EXISTS resource_categories (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL CHECK (char_length(name) <= 80),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS resource_categories_name_lower_idx
+      ON resource_categories ((lower(name)))
+    `
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_categories_created_at_idx
+      ON resource_categories (created_at DESC)
+    `
+
+    await sql`
+      INSERT INTO resource_categories (name)
+      VALUES ('General')
+      ON CONFLICT DO NOTHING
+    `
+
+    await sql`
+      INSERT INTO resource_categories (name)
+      SELECT DISTINCT trim(category)
+      FROM resource_cards
+      WHERE trim(category) <> ''
+      ON CONFLICT DO NOTHING
+    `
+
+    await sql`
       CREATE TABLE IF NOT EXISTS resource_links (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         resource_id UUID NOT NULL REFERENCES resource_cards(id) ON DELETE CASCADE,

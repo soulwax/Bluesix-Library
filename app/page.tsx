@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { signIn, signOut, useSession } from "next-auth/react"
 
-import type { ResourceCard, ResourceInput } from "@/lib/resources"
+import type { ResourceCard, ResourceCategory, ResourceInput } from "@/lib/resources"
 import { AddResourceModal } from "@/components/add-resource-modal"
 import { CategorySidebar } from "@/components/category-sidebar"
 import { useColorScheme } from "@/components/color-scheme-provider"
@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   BookOpen,
   FolderOpen,
+  FolderPlus,
   Github,
   LogIn,
   LogOut,
@@ -41,6 +42,7 @@ import {
   Search,
   Settings2,
   ShieldPlus,
+  Trash2,
   UserPlus,
 } from "lucide-react"
 import { Toaster, toast } from "sonner"
@@ -72,6 +74,23 @@ interface ListResourcesResponse extends ApiErrorResponse {
   resources?: ResourceCard[]
 }
 
+interface ListCategoriesResponse extends ApiErrorResponse {
+  mode?: "database" | "mock"
+  categories?: ResourceCategory[]
+}
+
+interface CategoryResponse extends ApiErrorResponse {
+  mode?: "database" | "mock"
+  category?: ResourceCategory
+}
+
+interface DeleteCategoryResponse extends ApiErrorResponse {
+  mode?: "database" | "mock"
+  deletedCategory?: ResourceCategory
+  reassignedCategory?: ResourceCategory
+  reassignedResources?: number
+}
+
 interface ResourceResponse extends ApiErrorResponse {
   mode?: "database" | "mock"
   resource?: ResourceCard
@@ -99,6 +118,7 @@ async function readJson<T>(response: Response): Promise<T | null> {
 export default function Page() {
   const { data: session, status: sessionStatus } = useSession()
   const [resources, setResources] = useState<ResourceCard[]>([])
+  const [categoryRecords, setCategoryRecords] = useState<ResourceCategory[]>([])
   const [activeCategory, setActiveCategory] = useState<string | "All">("All")
   const [searchQuery, setSearchQuery] = useState("")
   const [modalOpen, setModalOpen] = useState(false)
@@ -119,6 +139,9 @@ export default function Page() {
   const [authPassword, setAuthPassword] = useState("")
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
   const [isResendingVerification, setIsResendingVerification] = useState(false)
+  const [createCategoryDialogOpen, setCreateCategoryDialogOpen] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState("")
+  const [isCategoryMutating, setIsCategoryMutating] = useState(false)
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false)
   const [promoteIdentifier, setPromoteIdentifier] = useState("")
   const [isPromotingAdmin, setIsPromotingAdmin] = useState(false)
@@ -136,6 +159,8 @@ export default function Page() {
   const canManageResources = isAdmin
   const canSubmitAuth = authEmail.trim().length > 0 && authPassword.length > 0
   const canSubmitPromote = promoteIdentifier.trim().length > 0 && !isPromotingAdmin
+  const canSubmitCategory =
+    newCategoryName.trim().length > 0 && !isCategoryMutating && canManageResources
 
   const resourceCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -148,16 +173,30 @@ export default function Page() {
   }, [resources])
 
   const categories = useMemo(() => {
-    const unique = new Set<string>()
-    for (const resource of resources) {
-      const category = resource.category.trim()
-      if (category.length > 0) {
-        unique.add(category)
+    const uniqueByKey = new Map<string, string>()
+
+    for (const categoryRecord of categoryRecords) {
+      const normalized = categoryRecord.name.trim()
+      if (!normalized) {
+        continue
       }
+
+      uniqueByKey.set(normalized.toLowerCase(), normalized)
     }
 
-    return [...unique]
-  }, [resources])
+    for (const resource of resources) {
+      const normalized = resource.category.trim()
+      if (!normalized) {
+        continue
+      }
+
+      uniqueByKey.set(normalized.toLowerCase(), normalized)
+    }
+
+    return [...uniqueByKey.values()].sort((left, right) =>
+      left.localeCompare(right, undefined, { sensitivity: "base" })
+    )
+  }, [categoryRecords, resources])
 
   const filteredResources = useMemo(() => {
     let result = resources
@@ -187,6 +226,15 @@ export default function Page() {
     () => resources.reduce((acc, resource) => acc + resource.links.length, 0),
     [resources]
   )
+  const activeCategoryRecord = useMemo(() => {
+    if (activeCategory === "All") {
+      return null
+    }
+
+    return (
+      categoryRecords.find((category) => category.name === activeCategory) ?? null
+    )
+  }, [activeCategory, categoryRecords])
   const activeColorScheme =
     colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null
 
@@ -217,15 +265,38 @@ export default function Page() {
     }
   }, [])
 
-  useEffect(() => {
-    void fetchResources()
-  }, [fetchResources])
+  const fetchCategories = useCallback(async () => {
+    try {
+      const response = await fetch("/api/categories", {
+        cache: "no-store",
+      })
+      const payload = await readJson<ListCategoriesResponse>(response)
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to load categories.")
+      }
+
+      setCategoryRecords(payload?.categories ?? [])
+      if (payload?.mode) {
+        setDataMode(payload.mode)
+      }
+    } catch (error) {
+      console.error(
+        "Failed to fetch categories:",
+        error instanceof Error ? error.message : error
+      )
+    }
+  }, [])
 
   useEffect(() => {
-    if (activeCategory !== "All" && !resourceCounts[activeCategory]) {
+    void Promise.all([fetchResources(), fetchCategories()])
+  }, [fetchCategories, fetchResources])
+
+  useEffect(() => {
+    if (activeCategory !== "All" && !categories.includes(activeCategory)) {
       setActiveCategory("All")
     }
-  }, [activeCategory, resourceCounts])
+  }, [activeCategory, categories])
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -449,6 +520,124 @@ export default function Page() {
     [setColorSchemeByIndex]
   )
 
+  const handleCreateCategory = useCallback(async () => {
+    if (!canSubmitCategory) {
+      return
+    }
+
+    setIsCategoryMutating(true)
+
+    try {
+      const response = await fetch("/api/categories", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: newCategoryName.trim(),
+        }),
+      })
+      const payload = await readJson<CategoryResponse>(response)
+
+      if (!response.ok || !payload?.category) {
+        throw new Error(payload?.error ?? "Failed to create category.")
+      }
+      const createdCategory = payload.category
+
+      if (payload.mode) {
+        setDataMode(payload.mode)
+      }
+
+      setCategoryRecords((previous) => {
+        const next = [...previous.filter((item) => item.id !== createdCategory.id)]
+        next.push(createdCategory)
+        return next
+      })
+      void fetchCategories()
+      setNewCategoryName("")
+      setCreateCategoryDialogOpen(false)
+      setActiveCategory(createdCategory.name)
+
+      toast.success("Category created", {
+        description: `${createdCategory.name} is now available.`,
+      })
+    } catch (error) {
+      toast.error("Category creation failed", {
+        description:
+          error instanceof Error ? error.message : "Could not create category.",
+      })
+    } finally {
+      setIsCategoryMutating(false)
+    }
+  }, [canSubmitCategory, fetchCategories, newCategoryName])
+
+  const handleDeleteActiveCategory = useCallback(async () => {
+    if (!canManageResources || !activeCategoryRecord || activeCategory === "All") {
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Delete category "${activeCategoryRecord.name}"? Resources in this category will be reassigned.`
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setIsCategoryMutating(true)
+
+    try {
+      const response = await fetch(`/api/categories/${activeCategoryRecord.id}`, {
+        method: "DELETE",
+      })
+      const payload = await readJson<DeleteCategoryResponse>(response)
+
+      if (!response.ok || !payload?.deletedCategory || !payload?.reassignedCategory) {
+        throw new Error(payload?.error ?? "Failed to delete category.")
+      }
+
+      if (payload.mode) {
+        setDataMode(payload.mode)
+      }
+
+      setCategoryRecords((previous) => {
+        const withoutDeleted = previous.filter(
+          (category) => category.id !== payload.deletedCategory?.id
+        )
+        const hasFallback = withoutDeleted.some(
+          (category) => category.id === payload.reassignedCategory?.id
+        )
+
+        if (hasFallback || !payload.reassignedCategory) {
+          return withoutDeleted
+        }
+
+        return [...withoutDeleted, payload.reassignedCategory]
+      })
+
+      const normalizedDeleted = payload.deletedCategory.name.toLowerCase()
+      setResources((previous) =>
+        previous.map((resource) =>
+          resource.category.toLowerCase() === normalizedDeleted
+            ? { ...resource, category: payload.reassignedCategory?.name ?? resource.category }
+            : resource
+        )
+      )
+
+      setActiveCategory("All")
+      void fetchCategories()
+      toast.success("Category deleted", {
+        description: `${payload.reassignedResources ?? 0} resource(s) reassigned to ${payload.reassignedCategory.name}.`,
+      })
+    } catch (error) {
+      toast.error("Category deletion failed", {
+        description:
+          error instanceof Error ? error.message : "Could not delete category.",
+      })
+    } finally {
+      setIsCategoryMutating(false)
+    }
+  }, [activeCategory, activeCategoryRecord, canManageResources, fetchCategories])
+
   const handleSignOut = useCallback(async () => {
     await signOut({ redirect: false })
     toast.success("Signed out", {
@@ -545,6 +734,7 @@ export default function Page() {
 
         setEditingResource(null)
         setModalOpen(false)
+        void fetchCategories()
 
         toast.success(isEditing ? "Resource updated" : "Resource added", {
           description: `${savedResource.category} card saved to your library.`,
@@ -560,7 +750,7 @@ export default function Page() {
         setIsSaving(false)
       }
     },
-    [canManageResources, editingResource]
+    [canManageResources, editingResource, fetchCategories]
   )
 
   const handleRestoreArchivedResource = useCallback(async (resourceId: string) => {
@@ -785,6 +975,28 @@ export default function Page() {
                   </Link>
                 </Button>
               ) : null}
+              {canManageResources ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreateCategoryDialogOpen(true)}
+                  disabled={isCategoryMutating}
+                >
+                  <FolderPlus className="h-4 w-4" />
+                  <span className="ml-2 hidden sm:inline">New Category</span>
+                </Button>
+              ) : null}
+              {canManageResources && activeCategory !== "All" && activeCategoryRecord ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleDeleteActiveCategory()}
+                  disabled={isCategoryMutating}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span className="ml-2 hidden sm:inline">Delete Category</span>
+                </Button>
+              ) : null}
               <Button variant="outline" size="sm" onClick={() => void handleSignOut()}>
                 <LogOut className="h-4 w-4" />
                 <span className="ml-2 hidden sm:inline">Sign out</span>
@@ -922,6 +1134,45 @@ export default function Page() {
           )}
         </main>
       </div>
+
+      <Dialog
+        open={createCategoryDialogOpen}
+        onOpenChange={(open) => {
+          setCreateCategoryDialogOpen(open)
+          if (!open) {
+            setNewCategoryName("")
+            setIsCategoryMutating(false)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Category</DialogTitle>
+            <DialogDescription>
+              Categories are persistent and available in all future sessions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-category-name">Name</Label>
+            <Input
+              id="new-category-name"
+              value={newCategoryName}
+              onChange={(event) => setNewCategoryName(event.target.value)}
+              placeholder="e.g. Web Security"
+              disabled={isCategoryMutating}
+            />
+          </div>
+
+          <Button
+            type="button"
+            onClick={() => void handleCreateCategory()}
+            disabled={!canSubmitCategory}
+          >
+            {isCategoryMutating ? "Creating..." : "Create Category"}
+          </Button>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={authDialogOpen} onOpenChange={handleAuthDialogOpenChange}>
         <DialogContent className="sm:max-w-md">

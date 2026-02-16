@@ -4,9 +4,12 @@ import { ensureSuperAdminSeeded } from "@/lib/auth-service"
 import { hasDatabaseEnv } from "@/lib/env"
 import { loadLibraryResourcesFromFile } from "@/lib/library-parser"
 import {
+  createMockResourceCategory,
   createMockResource,
+  deleteMockResourceCategory,
   deleteMockResource,
   hasAnyMockResources,
+  listMockResourceCategories,
   listMockResourceAuditLogs,
   listMockResourcesIncludingDeleted,
   listMockResources,
@@ -14,9 +17,12 @@ import {
   updateMockResource,
 } from "@/lib/mock-resource-store"
 import {
+  createResourceCategory as createDbResourceCategory,
   createResource as createDbResource,
+  deleteResourceCategory as deleteDbResourceCategory,
   deleteResource as deleteDbResource,
   hasAnyResources as hasAnyDbResources,
+  listResourceCategories as listDbResourceCategories,
   listResourceAuditLogs as listDbResourceAuditLogs,
   listResourcesIncludingDeleted as listDbResourcesIncludingDeleted,
   listResources as listDbResources,
@@ -27,6 +33,7 @@ import type {
   ResourceAuditActor,
   ResourceAuditLogEntry,
   ResourceCard,
+  ResourceCategory,
   ResourceInput,
 } from "@/lib/resources"
 
@@ -100,6 +107,64 @@ export async function listResourcesService(): Promise<{
     mode,
     resources: await listMockResources(),
   }
+}
+
+export async function listResourceCategoriesService(): Promise<{
+  mode: ResourceDataMode
+  categories: ResourceCategory[]
+}> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    await ensureDatabaseBootstrapped()
+
+    return {
+      mode,
+      categories: await listDbResourceCategories(),
+    }
+  }
+
+  return {
+    mode,
+    categories: await listMockResourceCategories(),
+  }
+}
+
+export async function createResourceCategoryService(
+  name: string
+): Promise<{ mode: ResourceDataMode; category: ResourceCategory }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    return {
+      mode,
+      category: await createDbResourceCategory(name),
+    }
+  }
+
+  return {
+    mode,
+    category: await createMockResourceCategory(name),
+  }
+}
+
+export async function deleteResourceCategoryService(
+  id: string
+): Promise<{
+  mode: ResourceDataMode
+  deletedCategory: ResourceCategory
+  reassignedCategory: ResourceCategory
+  reassignedResources: number
+}> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    const result = await deleteDbResourceCategory(id)
+    return { mode, ...result }
+  }
+
+  const result = await deleteMockResourceCategory(id)
+  return { mode, ...result }
 }
 
 export async function createResourceService(
