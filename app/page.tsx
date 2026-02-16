@@ -1,34 +1,42 @@
-"use client"
+"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import Link from "next/link"
-import { signIn, signOut, useSession } from "next-auth/react"
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { signIn, signOut, useSession } from "next-auth/react";
 
-import type { ResourceCard, ResourceCategory, ResourceInput } from "@/lib/resources"
-import { AddResourceModal } from "@/components/add-resource-modal"
-import { CategorySidebar } from "@/components/category-sidebar"
-import { useColorScheme } from "@/components/color-scheme-provider"
-import { ResourceCardItem } from "@/components/resource-card"
-import { Button } from "@/components/ui/button"
+import type {
+  ResourceCard,
+  ResourceCategory,
+  ResourceInput,
+} from "@/lib/resources";
+import { AddResourceModal } from "@/components/add-resource-modal";
+import { CategorySidebar } from "@/components/category-sidebar";
+import { useColorScheme } from "@/components/color-scheme-provider";
+import { ResourceCardItem } from "@/components/resource-card";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet"
-import { Slider } from "@/components/ui/slider"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from "@/components/ui/sheet";
+import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BookOpen,
   FolderOpen,
@@ -44,339 +52,351 @@ import {
   ShieldPlus,
   Trash2,
   UserPlus,
-} from "lucide-react"
-import { Toaster, toast } from "sonner"
+} from "lucide-react";
+import { Toaster, toast } from "sonner";
 
 interface ApiErrorResponse {
-  error?: string
-  mode?: "database" | "mock"
+  error?: string;
+  mode?: "database" | "mock";
 }
 
 interface AuthRegisterResponse extends ApiErrorResponse {
-  requiresEmailVerification?: boolean
-  verificationEmailMode?: "resend" | "mock"
-  verificationPreviewUrl?: string | null
+  requiresEmailVerification?: boolean;
+  verificationEmailMode?: "resend" | "mock";
+  verificationPreviewUrl?: string | null;
   user?: {
-    id: string
-    email: string
-  }
+    id: string;
+    email: string;
+  };
 }
 
 interface ResendVerificationResponse extends ApiErrorResponse {
-  alreadyVerified?: boolean
-  verificationEmailMode?: "resend" | "mock"
-  verificationPreviewUrl?: string | null
-  ok?: boolean
+  alreadyVerified?: boolean;
+  verificationEmailMode?: "resend" | "mock";
+  verificationPreviewUrl?: string | null;
+  ok?: boolean;
 }
 
 interface ListResourcesResponse extends ApiErrorResponse {
-  mode?: "database" | "mock"
-  resources?: ResourceCard[]
+  mode?: "database" | "mock";
+  resources?: ResourceCard[];
 }
 
 interface ListCategoriesResponse extends ApiErrorResponse {
-  mode?: "database" | "mock"
-  categories?: ResourceCategory[]
+  mode?: "database" | "mock";
+  categories?: ResourceCategory[];
 }
 
 interface CategoryResponse extends ApiErrorResponse {
-  mode?: "database" | "mock"
-  category?: ResourceCategory
+  mode?: "database" | "mock";
+  category?: ResourceCategory;
 }
 
 interface DeleteCategoryResponse extends ApiErrorResponse {
-  mode?: "database" | "mock"
-  deletedCategory?: ResourceCategory
-  reassignedCategory?: ResourceCategory
-  reassignedResources?: number
+  mode?: "database" | "mock";
+  deletedCategory?: ResourceCategory;
+  reassignedCategory?: ResourceCategory;
+  reassignedResources?: number;
 }
 
 interface ResourceResponse extends ApiErrorResponse {
-  mode?: "database" | "mock"
-  resource?: ResourceCard
+  mode?: "database" | "mock";
+  resource?: ResourceCard;
 }
 
 interface PromoteAdminResponse extends ApiErrorResponse {
   user?: {
-    id: string
-    email: string
-    isAdmin: boolean
-    isFirstAdmin: boolean
-  }
+    id: string;
+    email: string;
+    isAdmin: boolean;
+    isFirstAdmin: boolean;
+  };
 }
 
-type AuthMode = "login" | "register"
+type AuthMode = "login" | "register";
 
 async function readJson<T>(response: Response): Promise<T | null> {
   try {
-    return (await response.json()) as T
+    return (await response.json()) as T;
   } catch {
-    return null
+    return null;
   }
 }
 
 export default function Page() {
-  const { data: session, status: sessionStatus } = useSession()
-  const [resources, setResources] = useState<ResourceCard[]>([])
-  const [categoryRecords, setCategoryRecords] = useState<ResourceCategory[]>([])
-  const [activeCategory, setActiveCategory] = useState<string | "All">("All")
-  const [searchQuery, setSearchQuery] = useState("")
-  const [modalOpen, setModalOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { data: session, status: sessionStatus } = useSession();
+  const [resources, setResources] = useState<ResourceCard[]>([]);
+  const [categoryRecords, setCategoryRecords] = useState<ResourceCategory[]>(
+    [],
+  );
+  const [activeCategory, setActiveCategory] = useState<string | "All">("All");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<ResourceCard | null>(
-    null
-  )
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
+    null,
+  );
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [deletingResourceId, setDeletingResourceId] = useState<string | null>(
-    null
-  )
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [dataMode, setDataMode] = useState<"database" | "mock">("mock")
-  const [authDialogOpen, setAuthDialogOpen] = useState(false)
-  const [authMode, setAuthMode] = useState<AuthMode>("login")
-  const [authEmail, setAuthEmail] = useState("")
-  const [authPassword, setAuthPassword] = useState("")
-  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
-  const [isResendingVerification, setIsResendingVerification] = useState(false)
-  const [createCategoryDialogOpen, setCreateCategoryDialogOpen] = useState(false)
-  const [newCategoryName, setNewCategoryName] = useState("")
-  const [newCategorySymbol, setNewCategorySymbol] = useState("")
-  const [isCategoryMutating, setIsCategoryMutating] = useState(false)
-  const [promoteDialogOpen, setPromoteDialogOpen] = useState(false)
-  const [promoteIdentifier, setPromoteIdentifier] = useState("")
-  const [isPromotingAdmin, setIsPromotingAdmin] = useState(false)
+    null,
+  );
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [dataMode, setDataMode] = useState<"database" | "mock">("mock");
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [createCategoryDialogOpen, setCreateCategoryDialogOpen] =
+    useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategorySymbol, setNewCategorySymbol] = useState("");
+  const [isCategoryMutating, setIsCategoryMutating] = useState(false);
+  const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
+  const [promoteIdentifier, setPromoteIdentifier] = useState("");
+  const [isPromotingAdmin, setIsPromotingAdmin] = useState(false);
   const {
     schemes: colorSchemes,
     currentSchemeIndex,
     isLoading: isLoadingColorScheme,
     isSaving: isSavingColorScheme,
     setColorSchemeByIndex,
-  } = useColorScheme()
+  } = useColorScheme();
 
-  const isAuthenticated = Boolean(session?.user?.id)
-  const isAdmin = Boolean(session?.user?.isAdmin)
-  const isFirstAdmin = Boolean(session?.user?.isFirstAdmin)
-  const canManageResources = isAdmin
-  const canSubmitAuth = authEmail.trim().length > 0 && authPassword.length > 0
-  const canSubmitPromote = promoteIdentifier.trim().length > 0 && !isPromotingAdmin
+  const isAuthenticated = Boolean(session?.user?.id);
+  const isAdmin = Boolean(session?.user?.isAdmin);
+  const isFirstAdmin = Boolean(session?.user?.isFirstAdmin);
+  const canManageResources = isAdmin;
+  const canSubmitAuth = authEmail.trim().length > 0 && authPassword.length > 0;
+  const canSubmitPromote =
+    promoteIdentifier.trim().length > 0 && !isPromotingAdmin;
   const canSubmitCategory =
-    newCategoryName.trim().length > 0 && !isCategoryMutating && canManageResources
+    newCategoryName.trim().length > 0 &&
+    !isCategoryMutating &&
+    canManageResources;
 
   const resourceCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
+    const counts: Record<string, number> = {};
 
     for (const resource of resources) {
-      counts[resource.category] = (counts[resource.category] ?? 0) + 1
+      counts[resource.category] = (counts[resource.category] ?? 0) + 1;
     }
 
-    return counts
-  }, [resources])
+    return counts;
+  }, [resources]);
 
   const categories = useMemo(() => {
-    const uniqueByKey = new Map<string, string>()
+    const uniqueByKey = new Map<string, string>();
 
     for (const categoryRecord of categoryRecords) {
-      const normalized = categoryRecord.name.trim()
+      const normalized = categoryRecord.name.trim();
       if (!normalized) {
-        continue
+        continue;
       }
 
-      uniqueByKey.set(normalized.toLowerCase(), normalized)
+      uniqueByKey.set(normalized.toLowerCase(), normalized);
     }
 
     for (const resource of resources) {
-      const normalized = resource.category.trim()
+      const normalized = resource.category.trim();
       if (!normalized) {
-        continue
+        continue;
       }
-
-      uniqueByKey.set(normalized.toLowerCase(), normalized)
+      const key = normalized.toLowerCase();
+      if (!uniqueByKey.has(key)) {
+        uniqueByKey.set(key, normalized);
+      }
+      uniqueByKey.set(normalized.toLowerCase(), normalized);
     }
 
     return [...uniqueByKey.values()].sort((left, right) =>
-      left.localeCompare(right, undefined, { sensitivity: "base" })
-    )
-  }, [categoryRecords, resources])
+      left.localeCompare(right, undefined, { sensitivity: "base" }),
+    );
+  }, [categoryRecords, resources]);
 
   const categorySymbols = useMemo(() => {
-    const next: Record<string, string | undefined> = {}
+    const next: Record<string, string | undefined> = {};
     for (const category of categoryRecords) {
-      const normalized = category.name.trim()
+      const normalized = category.name.trim();
       if (!normalized) {
-        continue
+        continue;
       }
 
-      const symbol = category.symbol?.trim()
-      next[normalized] = symbol || undefined
+      const symbol = category.symbol?.trim();
+      next[normalized] = symbol || undefined;
     }
-    return next
-  }, [categoryRecords])
+    return next;
+  }, [categoryRecords]);
 
   const filteredResources = useMemo(() => {
-    let result = resources
+    let result = resources;
 
     if (activeCategory !== "All") {
-      result = result.filter((resource) => resource.category === activeCategory)
+      result = result.filter(
+        (resource) => resource.category === activeCategory,
+      );
     }
 
     if (searchQuery.trim()) {
-      const normalizedSearchQuery = searchQuery.toLowerCase()
+      const normalizedSearchQuery = searchQuery.toLowerCase();
       result = result.filter(
         (resource) =>
           resource.category.toLowerCase().includes(normalizedSearchQuery) ||
           resource.tags.some((tag) =>
-            tag.toLowerCase().includes(normalizedSearchQuery)
+            tag.toLowerCase().includes(normalizedSearchQuery),
           ) ||
           resource.links.some(
             (link) =>
               link.label.toLowerCase().includes(normalizedSearchQuery) ||
               link.url.toLowerCase().includes(normalizedSearchQuery) ||
-              link.note?.toLowerCase().includes(normalizedSearchQuery)
-          )
-      )
+              link.note?.toLowerCase().includes(normalizedSearchQuery),
+          ),
+      );
     }
 
-    return result
-  }, [resources, activeCategory, searchQuery])
+    return result;
+  }, [resources, activeCategory, searchQuery]);
 
   const totalLinks = useMemo(
     () => resources.reduce((acc, resource) => acc + resource.links.length, 0),
-    [resources]
-  )
+    [resources],
+  );
   const activeCategoryRecord = useMemo(() => {
     if (activeCategory === "All") {
-      return null
+      return null;
     }
 
     return (
-      categoryRecords.find((category) => category.name === activeCategory) ?? null
-    )
-  }, [activeCategory, categoryRecords])
+      categoryRecords.find((category) => category.name === activeCategory) ??
+      null
+    );
+  }, [activeCategory, categoryRecords]);
   const activeColorScheme =
-    colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null
+    colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null;
 
   const fetchResources = useCallback(async () => {
-    setIsLoading(true)
-    setLoadError(null)
+    setIsLoading(true);
+    setLoadError(null);
 
     try {
       const response = await fetch("/api/resources", {
         cache: "no-store",
-      })
-      const payload = await readJson<ListResourcesResponse>(response)
+      });
+      const payload = await readJson<ListResourcesResponse>(response);
 
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Failed to load resources.")
+        throw new Error(payload?.error ?? "Failed to load resources.");
       }
 
-      setResources(payload?.resources ?? [])
-      setDataMode(payload?.mode === "database" ? "database" : "mock")
+      setResources(payload?.resources ?? []);
+      setDataMode(payload?.mode === "database" ? "database" : "mock");
     } catch (error) {
       setLoadError(
         error instanceof Error
           ? error.message
-          : "Failed to load resources. Check the database setup and retry."
-      )
+          : "Failed to load resources. Check the database setup and retry.",
+      );
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }, [])
+  }, []);
 
   const fetchCategories = useCallback(async () => {
     try {
       const response = await fetch("/api/categories", {
         cache: "no-store",
-      })
-      const payload = await readJson<ListCategoriesResponse>(response)
+      });
+      const payload = await readJson<ListCategoriesResponse>(response);
 
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Failed to load categories.")
+        throw new Error(payload?.error ?? "Failed to load categories.");
       }
 
-      setCategoryRecords(payload?.categories ?? [])
+      setCategoryRecords(payload?.categories ?? []);
       if (payload?.mode) {
-        setDataMode(payload.mode)
+        setDataMode(payload.mode);
       }
     } catch (error) {
       console.error(
         "Failed to fetch categories:",
-        error instanceof Error ? error.message : error
-      )
+        error instanceof Error ? error.message : error,
+      );
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    void Promise.all([fetchResources(), fetchCategories()])
-  }, [fetchCategories, fetchResources])
+    void Promise.all([fetchResources(), fetchCategories()]);
+  }, [fetchCategories, fetchResources]);
 
   useEffect(() => {
     if (activeCategory !== "All" && !categories.includes(activeCategory)) {
-      setActiveCategory("All")
+      setActiveCategory("All");
     }
-  }, [activeCategory, categories])
+  }, [activeCategory, categories]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
-      return
+      return;
     }
 
-    const currentUrl = new URL(window.location.href)
-    const verificationStatus = currentUrl.searchParams.get("emailVerification")
+    const currentUrl = new URL(window.location.href);
+    const verificationStatus = currentUrl.searchParams.get("emailVerification");
     if (!verificationStatus) {
-      return
+      return;
     }
 
     if (verificationStatus === "success") {
       toast.success("Email verified", {
         description: "You can now sign in with your credentials.",
-      })
+      });
     } else {
       toast.error("Verification link invalid", {
         description: "Request a new verification email and try again.",
-      })
+      });
     }
 
-    currentUrl.searchParams.delete("emailVerification")
-    const nextPath = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
-    window.history.replaceState({}, "", nextPath || "/")
-  }, [])
+    currentUrl.searchParams.delete("emailVerification");
+    const nextPath = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
+    window.history.replaceState({}, "", nextPath || "/");
+  }, []);
 
   const resetAuthForm = useCallback(() => {
-    setAuthEmail("")
-    setAuthPassword("")
-    setIsAuthSubmitting(false)
-    setIsResendingVerification(false)
-  }, [])
+    setAuthEmail("");
+    setAuthPassword("");
+    setIsAuthSubmitting(false);
+    setIsResendingVerification(false);
+  }, []);
 
   const handleAuthDialogOpenChange = useCallback(
     (open: boolean) => {
-      setAuthDialogOpen(open)
+      setAuthDialogOpen(open);
       if (!open) {
-        resetAuthForm()
+        resetAuthForm();
       }
     },
-    [resetAuthForm]
-  )
+    [resetAuthForm],
+  );
 
   const openAuthDialog = useCallback((mode: AuthMode) => {
-    setAuthMode(mode)
-    setAuthDialogOpen(true)
-  }, [])
+    setAuthMode(mode);
+    setAuthDialogOpen(true);
+  }, []);
 
   const handleAuthSubmit = useCallback(async () => {
     if (isAuthSubmitting) {
-      return
+      return;
     }
 
-    setIsAuthSubmitting(true)
+    setIsAuthSubmitting(true);
 
     try {
-      const email = authEmail.trim().toLowerCase()
-      const password = authPassword
+      const email = authEmail.trim().toLowerCase();
+      const password = authPassword;
 
       if (!email || !password) {
-        throw new Error("Username/email and password are required.")
+        throw new Error("Username/email and password are required.");
       }
 
       if (authMode === "register") {
@@ -386,80 +406,91 @@ export default function Page() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ email, password }),
-        })
-        const registerPayload = await readJson<AuthRegisterResponse>(
-          registerResponse
-        )
+        });
+        const registerPayload =
+          await readJson<AuthRegisterResponse>(registerResponse);
 
         if (!registerResponse.ok) {
-          throw new Error(registerPayload?.error ?? "Registration failed.")
+          throw new Error(registerPayload?.error ?? "Registration failed.");
         }
 
-        handleAuthDialogOpenChange(false)
-        setAuthMode("login")
-        setAuthEmail(email)
-        setAuthPassword("")
+        handleAuthDialogOpenChange(false);
+        setAuthMode("login");
+        setAuthEmail(email);
+        setAuthPassword("");
 
         if (registerPayload?.verificationEmailMode === "mock") {
           toast.success("Registration complete", {
             description: registerPayload.verificationPreviewUrl
               ? `Open the verification link: ${registerPayload.verificationPreviewUrl}`
               : "Verification link available in server logs.",
-          })
+          });
         } else {
           toast.success("Registration complete", {
-            description: "Check your inbox and confirm your email before sign in.",
-          })
+            description:
+              "Check your inbox and confirm your email before sign in.",
+          });
         }
 
-        return
+        return;
       }
 
       const signInResult = await signIn("credentials", {
         email,
         password,
         redirect: false,
-      })
+      });
 
       if (signInResult?.error) {
         if (signInResult.error === "EMAIL_NOT_VERIFIED") {
           throw new Error(
-            "Email not verified yet. Check your inbox or resend verification."
-          )
+            "Email not verified yet. Check your inbox or resend verification.",
+          );
         }
 
-        throw new Error("Invalid username/email or password.")
+        throw new Error("Invalid username/email or password.");
       }
 
-      handleAuthDialogOpenChange(false)
+      handleAuthDialogOpenChange(false);
 
       toast.success("Signed in", {
         description: "Authenticated actions are now unlocked.",
-      })
+      });
     } catch (error) {
-      toast.error(authMode === "register" ? "Registration failed" : "Sign-in failed", {
-        description:
-          error instanceof Error ? error.message : "Could not authenticate user.",
-      })
+      toast.error(
+        authMode === "register" ? "Registration failed" : "Sign-in failed",
+        {
+          description:
+            error instanceof Error
+              ? error.message
+              : "Could not authenticate user.",
+        },
+      );
     } finally {
-      setIsAuthSubmitting(false)
+      setIsAuthSubmitting(false);
     }
-  }, [authEmail, authMode, authPassword, handleAuthDialogOpenChange, isAuthSubmitting])
+  }, [
+    authEmail,
+    authMode,
+    authPassword,
+    handleAuthDialogOpenChange,
+    isAuthSubmitting,
+  ]);
 
   const handleResendVerification = useCallback(async () => {
     if (isResendingVerification) {
-      return
+      return;
     }
 
-    const email = authEmail.trim().toLowerCase()
+    const email = authEmail.trim().toLowerCase();
     if (!email) {
       toast.error("Email required", {
         description: "Enter your email first, then resend verification.",
-      })
-      return
+      });
+      return;
     }
 
-    setIsResendingVerification(true)
+    setIsResendingVerification(true);
 
     try {
       const response = await fetch("/api/auth/resend-verification", {
@@ -468,18 +499,20 @@ export default function Page() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ email }),
-      })
-      const payload = await readJson<ResendVerificationResponse>(response)
+      });
+      const payload = await readJson<ResendVerificationResponse>(response);
 
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Failed to resend verification email.")
+        throw new Error(
+          payload?.error ?? "Failed to resend verification email.",
+        );
       }
 
       if (payload?.alreadyVerified) {
         toast.success("Email already verified", {
           description: "You can sign in now.",
-        })
-        return
+        });
+        return;
       }
 
       if (payload?.verificationEmailMode === "mock") {
@@ -487,63 +520,63 @@ export default function Page() {
           description: payload.verificationPreviewUrl
             ? `Open this link: ${payload.verificationPreviewUrl}`
             : "Verification link available in server logs.",
-        })
-        return
+        });
+        return;
       }
 
       toast.success("Verification email sent", {
         description: "Check your inbox for a new verification link.",
-      })
+      });
     } catch (error) {
       toast.error("Resend failed", {
         description:
           error instanceof Error
             ? error.message
             : "Could not resend verification email.",
-      })
+      });
     } finally {
-      setIsResendingVerification(false)
+      setIsResendingVerification(false);
     }
-  }, [authEmail, isResendingVerification])
+  }, [authEmail, isResendingVerification]);
 
   const handleColorSchemePreview = useCallback(
     (value: number[]) => {
-      const index = value[0]
+      const index = value[0];
       if (typeof index !== "number") {
-        return
+        return;
       }
 
-      void setColorSchemeByIndex(index, { persist: false })
+      void setColorSchemeByIndex(index, { persist: false });
     },
-    [setColorSchemeByIndex]
-  )
+    [setColorSchemeByIndex],
+  );
 
   const handleColorSchemeCommit = useCallback(
     (value: number[]) => {
-      const index = value[0]
+      const index = value[0];
       if (typeof index !== "number") {
-        return
+        return;
       }
 
       void (async () => {
-        const saved = await setColorSchemeByIndex(index, { persist: true })
+        const saved = await setColorSchemeByIndex(index, { persist: true });
         if (!saved) {
           toast.error("Color scheme not saved", {
             description:
               "Preview applied locally, but we could not persist your preference.",
-          })
+          });
         }
-      })()
+      })();
     },
-    [setColorSchemeByIndex]
-  )
+    [setColorSchemeByIndex],
+  );
 
   const handleCreateCategory = useCallback(async () => {
     if (!canSubmitCategory) {
-      return
+      return;
     }
 
-    setIsCategoryMutating(true)
+    setIsCategoryMutating(true);
 
     try {
       const response = await fetch("/api/categories", {
@@ -555,180 +588,208 @@ export default function Page() {
           name: newCategoryName.trim(),
           symbol: newCategorySymbol.trim() || null,
         }),
-      })
-      const payload = await readJson<CategoryResponse>(response)
+      });
+      const payload = await readJson<CategoryResponse>(response);
 
       if (!response.ok || !payload?.category) {
-        throw new Error(payload?.error ?? "Failed to create category.")
+        throw new Error(payload?.error ?? "Failed to create category.");
       }
-      const createdCategory = payload.category
+      const createdCategory = payload.category;
 
       if (payload.mode) {
-        setDataMode(payload.mode)
+        setDataMode(payload.mode);
       }
 
       setCategoryRecords((previous) => {
-        const next = [...previous.filter((item) => item.id !== createdCategory.id)]
-        next.push(createdCategory)
-        return next
-      })
-      void fetchCategories()
-      setNewCategoryName("")
-      setNewCategorySymbol("")
-      setCreateCategoryDialogOpen(false)
-      setActiveCategory(createdCategory.name)
+        const next = [
+          ...previous.filter((item) => item.id !== createdCategory.id),
+        ];
+        next.push(createdCategory);
+        return next;
+      });
+      void fetchCategories();
+      setNewCategoryName("");
+      setNewCategorySymbol("");
+      setCreateCategoryDialogOpen(false);
+      setActiveCategory(createdCategory.name);
 
       toast.success("Category created", {
         description: `${createdCategory.name} is now available.`,
-      })
+      });
     } catch (error) {
       toast.error("Category creation failed", {
         description:
           error instanceof Error ? error.message : "Could not create category.",
-      })
+      });
     } finally {
-      setIsCategoryMutating(false)
+      setIsCategoryMutating(false);
     }
-  }, [canSubmitCategory, fetchCategories, newCategoryName, newCategorySymbol])
+  }, [canSubmitCategory, fetchCategories, newCategoryName, newCategorySymbol]);
 
   const handleUpdateActiveCategorySymbol = useCallback(async () => {
-    if (!canManageResources || !activeCategoryRecord || activeCategory === "All") {
-      return
+    if (
+      !canManageResources ||
+      !activeCategoryRecord ||
+      activeCategory === "All"
+    ) {
+      return;
     }
 
     const nextSymbol = window.prompt(
       `Set symbol for "${activeCategoryRecord.name}" (leave empty to clear):`,
-      activeCategoryRecord.symbol ?? ""
-    )
+      activeCategoryRecord.symbol ?? "",
+    );
     if (nextSymbol === null) {
-      return
+      return;
     }
 
-    setIsCategoryMutating(true)
+    setIsCategoryMutating(true);
     try {
-      const response = await fetch(`/api/categories/${activeCategoryRecord.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/categories/${activeCategoryRecord.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            symbol: nextSymbol.trim() || null,
+          }),
         },
-        body: JSON.stringify({
-          symbol: nextSymbol.trim() || null,
-        }),
-      })
-      const payload = await readJson<CategoryResponse>(response)
+      );
+      const payload = await readJson<CategoryResponse>(response);
       if (!response.ok || !payload?.category) {
-        throw new Error(payload?.error ?? "Failed to update category symbol.")
+        throw new Error(payload?.error ?? "Failed to update category symbol.");
       }
-      const updatedCategory = payload.category
+      const updatedCategory = payload.category;
 
       if (payload.mode) {
-        setDataMode(payload.mode)
+        setDataMode(payload.mode);
       }
 
       setCategoryRecords((previous) =>
         previous.map((category) =>
-          category.id === updatedCategory.id ? updatedCategory : category
-        )
-      )
+          category.id === updatedCategory.id ? updatedCategory : category,
+        ),
+      );
       toast.success("Category symbol updated", {
         description: `${updatedCategory.name} now uses ${updatedCategory.symbol || "no symbol"}.`,
-      })
+      });
     } catch (error) {
       toast.error("Category symbol update failed", {
         description:
           error instanceof Error
             ? error.message
             : "Could not update category symbol.",
-      })
+      });
     } finally {
-      setIsCategoryMutating(false)
+      setIsCategoryMutating(false);
     }
-  }, [activeCategory, activeCategoryRecord, canManageResources])
+  }, [activeCategory, activeCategoryRecord, canManageResources]);
 
   const handleDeleteActiveCategory = useCallback(async () => {
-    if (!canManageResources || !activeCategoryRecord || activeCategory === "All") {
-      return
+    if (
+      !canManageResources ||
+      !activeCategoryRecord ||
+      activeCategory === "All"
+    ) {
+      return;
     }
 
     const confirmed = window.confirm(
-      `Delete category "${activeCategoryRecord.name}"? Resources in this category will be reassigned.`
-    )
+      `Delete category "${activeCategoryRecord.name}"? Resources in this category will be reassigned.`,
+    );
     if (!confirmed) {
-      return
+      return;
     }
 
-    setIsCategoryMutating(true)
+    setIsCategoryMutating(true);
 
     try {
-      const response = await fetch(`/api/categories/${activeCategoryRecord.id}`, {
-        method: "DELETE",
-      })
-      const payload = await readJson<DeleteCategoryResponse>(response)
+      const response = await fetch(
+        `/api/categories/${activeCategoryRecord.id}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const payload = await readJson<DeleteCategoryResponse>(response);
 
-      if (!response.ok || !payload?.deletedCategory || !payload?.reassignedCategory) {
-        throw new Error(payload?.error ?? "Failed to delete category.")
+      if (
+        !response.ok ||
+        !payload?.deletedCategory ||
+        !payload?.reassignedCategory
+      ) {
+        throw new Error(payload?.error ?? "Failed to delete category.");
       }
 
       if (payload.mode) {
-        setDataMode(payload.mode)
+        setDataMode(payload.mode);
       }
 
       setCategoryRecords((previous) => {
         const withoutDeleted = previous.filter(
-          (category) => category.id !== payload.deletedCategory?.id
-        )
+          (category) => category.id !== payload.deletedCategory?.id,
+        );
         const hasFallback = withoutDeleted.some(
-          (category) => category.id === payload.reassignedCategory?.id
-        )
+          (category) => category.id === payload.reassignedCategory?.id,
+        );
 
         if (hasFallback || !payload.reassignedCategory) {
-          return withoutDeleted
+          return withoutDeleted;
         }
 
-        return [...withoutDeleted, payload.reassignedCategory]
-      })
+        return [...withoutDeleted, payload.reassignedCategory];
+      });
 
-      const normalizedDeleted = payload.deletedCategory.name.toLowerCase()
+      const normalizedDeleted = payload.deletedCategory.name.toLowerCase();
       setResources((previous) =>
         previous.map((resource) =>
           resource.category.toLowerCase() === normalizedDeleted
-            ? { ...resource, category: payload.reassignedCategory?.name ?? resource.category }
-            : resource
-        )
-      )
+            ? {
+                ...resource,
+                category: payload.reassignedCategory?.name ?? resource.category,
+              }
+            : resource,
+        ),
+      );
 
-      setActiveCategory("All")
-      void fetchCategories()
+      setActiveCategory("All");
+      void fetchCategories();
       toast.success("Category deleted", {
         description: `${payload.reassignedResources ?? 0} resource(s) reassigned to ${payload.reassignedCategory.name}.`,
-      })
+      });
     } catch (error) {
       toast.error("Category deletion failed", {
         description:
           error instanceof Error ? error.message : "Could not delete category.",
-      })
+      });
     } finally {
-      setIsCategoryMutating(false)
+      setIsCategoryMutating(false);
     }
-  }, [activeCategory, activeCategoryRecord, canManageResources, fetchCategories])
+  }, [
+    activeCategory,
+    activeCategoryRecord,
+    canManageResources,
+    fetchCategories,
+  ]);
 
   const handleSignOut = useCallback(async () => {
-    await signOut({ redirect: false })
+    await signOut({ redirect: false });
     toast.success("Signed out", {
       description: "Resource management actions are now locked.",
-    })
-  }, [])
+    });
+  }, []);
 
   const handleGitHubSignIn = useCallback(() => {
-    void signIn("github", { callbackUrl: "/" })
-  }, [])
+    void signIn("github", { callbackUrl: "/" });
+  }, []);
 
   const handlePromoteAdmin = useCallback(async () => {
     if (!isFirstAdmin || !canSubmitPromote) {
-      return
+      return;
     }
 
-    setIsPromotingAdmin(true)
+    setIsPromotingAdmin(true);
 
     try {
       const response = await fetch("/api/auth/admins", {
@@ -739,39 +800,41 @@ export default function Page() {
         body: JSON.stringify({
           identifier: promoteIdentifier.trim(),
         }),
-      })
-      const payload = await readJson<PromoteAdminResponse>(response)
+      });
+      const payload = await readJson<PromoteAdminResponse>(response);
 
       if (!response.ok || !payload?.user) {
-        throw new Error(payload?.error ?? "Failed to promote admin.")
+        throw new Error(payload?.error ?? "Failed to promote admin.");
       }
 
-      setPromoteIdentifier("")
-      setPromoteDialogOpen(false)
+      setPromoteIdentifier("");
+      setPromoteDialogOpen(false);
       toast.success("Admin promoted", {
         description: `${payload.user.email} can now manage resources.`,
-      })
+      });
     } catch (error) {
       toast.error("Promotion failed", {
         description:
-          error instanceof Error ? error.message : "Could not promote this user.",
-      })
+          error instanceof Error
+            ? error.message
+            : "Could not promote this user.",
+      });
     } finally {
-      setIsPromotingAdmin(false)
+      setIsPromotingAdmin(false);
     }
-  }, [canSubmitPromote, isFirstAdmin, promoteIdentifier])
+  }, [canSubmitPromote, isFirstAdmin, promoteIdentifier]);
 
   const handleSave = useCallback(
     async (input: ResourceInput) => {
       if (!canManageResources) {
         toast.error("Admin access required", {
           description: "Only admins can add or edit resource cards.",
-        })
-        return
+        });
+        return;
       }
 
-      const isEditing = editingResource !== null
-      setIsSaving(true)
+      const isEditing = editingResource !== null;
+      setIsSaving(true);
 
       try {
         const response = await fetch(
@@ -782,126 +845,140 @@ export default function Page() {
               "Content-Type": "application/json",
             },
             body: JSON.stringify(input),
-          }
-        )
+          },
+        );
 
-        const payload = await readJson<ResourceResponse>(response)
+        const payload = await readJson<ResourceResponse>(response);
 
         if (!response.ok || !payload?.resource) {
-          throw new Error(payload?.error ?? "Failed to save resource.")
+          throw new Error(payload?.error ?? "Failed to save resource.");
         }
 
-        const savedResource = payload.resource
+        const savedResource = payload.resource;
         if (payload.mode) {
-          setDataMode(payload.mode)
+          setDataMode(payload.mode);
         }
 
         setResources((prev) => {
           if (!isEditing) {
-            return [savedResource, ...prev]
+            return [savedResource, ...prev];
           }
 
           return prev.map((resource) =>
-            resource.id === savedResource.id ? savedResource : resource
-          )
-        })
+            resource.id === savedResource.id ? savedResource : resource,
+          );
+        });
 
-        setEditingResource(null)
-        setModalOpen(false)
-        void fetchCategories()
+        setEditingResource(null);
+        setModalOpen(false);
+        void fetchCategories();
 
         toast.success(isEditing ? "Resource updated" : "Resource added", {
           description: `${savedResource.category} card saved to your library.`,
-        })
+        });
       } catch (error) {
         toast.error("Save failed", {
           description:
             error instanceof Error
               ? error.message
               : "Could not save this resource.",
-        })
+        });
       } finally {
-        setIsSaving(false)
+        setIsSaving(false);
       }
     },
-    [canManageResources, editingResource, fetchCategories]
-  )
+    [canManageResources, editingResource, fetchCategories],
+  );
 
-  const handleRestoreArchivedResource = useCallback(async (resourceId: string) => {
-    const response = await fetch(`/api/admin/resources/${resourceId}/restore`, {
-      method: "POST",
-    })
-    const payload = await readJson<ResourceResponse>(response)
+  const handleRestoreArchivedResource = useCallback(
+    async (resourceId: string) => {
+      const response = await fetch(
+        `/api/admin/resources/${resourceId}/restore`,
+        {
+          method: "POST",
+        },
+      );
+      const payload = await readJson<ResourceResponse>(response);
 
-    if (!response.ok || !payload?.resource) {
-      throw new Error(payload?.error ?? "Failed to restore archived resource.")
-    }
+      if (!response.ok || !payload?.resource) {
+        throw new Error(
+          payload?.error ?? "Failed to restore archived resource.",
+        );
+      }
 
-    if (payload.mode) {
-      setDataMode(payload.mode)
-    }
+      if (payload.mode) {
+        setDataMode(payload.mode);
+      }
 
-    const restoredResource = payload.resource
-    setResources((prev) => {
-      const withoutRestored = prev.filter(
-        (resource) => resource.id !== restoredResource.id
-      )
-      return [restoredResource, ...withoutRestored]
-    })
+      const restoredResource = payload.resource;
+      setResources((prev) => {
+        const withoutRestored = prev.filter(
+          (resource) => resource.id !== restoredResource.id,
+        );
+        return [restoredResource, ...withoutRestored];
+      });
 
-    return restoredResource
-  }, [])
+      return restoredResource;
+    },
+    [],
+  );
 
   const handleDelete = useCallback(
     async (resourceId: string) => {
       if (!canManageResources) {
         toast.error("Admin access required", {
           description: "Only admins can archive resource cards.",
-        })
-        return
+        });
+        return;
       }
 
-      const archivedResource = resources.find((resource) => resource.id === resourceId)
-      setDeletingResourceId(resourceId)
+      const archivedResource = resources.find(
+        (resource) => resource.id === resourceId,
+      );
+      setDeletingResourceId(resourceId);
 
       try {
         const response = await fetch(`/api/resources/${resourceId}`, {
           method: "DELETE",
-        })
-        const payload = await readJson<ApiErrorResponse>(response)
+        });
+        const payload = await readJson<ApiErrorResponse>(response);
 
         if (!response.ok) {
-          throw new Error(payload?.error ?? "Failed to archive resource.")
+          throw new Error(payload?.error ?? "Failed to archive resource.");
         }
 
         if (payload?.mode) {
-          setDataMode(payload.mode)
+          setDataMode(payload.mode);
         }
 
-        setResources((prev) => prev.filter((resource) => resource.id !== resourceId))
+        setResources((prev) =>
+          prev.filter((resource) => resource.id !== resourceId),
+        );
         toast("Resource archived", {
-          description: "Hidden from library. Restore it now or from Admin Panel.",
+          description:
+            "Hidden from library. Restore it now or from Admin Panel.",
           action: {
             label: "Undo",
             onClick: () => {
               void (async () => {
                 try {
-                  const restored = await handleRestoreArchivedResource(resourceId)
+                  const restored =
+                    await handleRestoreArchivedResource(resourceId);
                   toast.success("Archive undone", {
                     description: `${restored.category} is visible again.`,
-                  })
+                  });
                 } catch (error) {
                   toast.error("Undo failed", {
                     description:
                       error instanceof Error
                         ? error.message
                         : "Could not restore this resource.",
-                  })
+                  });
                 }
-              })()
+              })();
             },
           },
-        })
+        });
       } catch (error) {
         toast.error("Archive failed", {
           description:
@@ -910,25 +987,25 @@ export default function Page() {
               : archivedResource
                 ? `Could not archive ${archivedResource.category}.`
                 : "Could not archive this resource.",
-        })
+        });
       } finally {
-        setDeletingResourceId(null)
+        setDeletingResourceId(null);
       }
     },
-    [canManageResources, handleRestoreArchivedResource, resources]
-  )
+    [canManageResources, handleRestoreArchivedResource, resources],
+  );
 
   const handleEdit = useCallback((resource: ResourceCard) => {
-    setEditingResource(resource)
-    setModalOpen(true)
-  }, [])
+    setEditingResource(resource);
+    setModalOpen(true);
+  }, []);
 
   const handleModalOpenChange = useCallback((open: boolean) => {
-    setModalOpen(open)
+    setModalOpen(open);
     if (!open) {
-      setEditingResource(null)
+      setEditingResource(null);
     }
-  }, [])
+  }, []);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -980,7 +1057,9 @@ export default function Page() {
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80 space-y-3">
               <div>
-                <p className="text-sm font-semibold text-foreground">Color Scheme</p>
+                <p className="text-sm font-semibold text-foreground">
+                  Color Scheme
+                </p>
                 <p className="text-xs text-muted-foreground">
                   Popular palettes used in major dev tools. Saved for{" "}
                   {isAuthenticated ? "your account" : "this visitor"}.
@@ -1022,7 +1101,9 @@ export default function Page() {
           </Popover>
 
           {sessionStatus === "loading" ? (
-            <span className="text-xs text-muted-foreground">Checking auth...</span>
+            <span className="text-xs text-muted-foreground">
+              Checking auth...
+            </span>
           ) : isAuthenticated ? (
             <>
               <span className="hidden max-w-48 truncate text-xs text-muted-foreground md:inline">
@@ -1060,7 +1141,9 @@ export default function Page() {
                   <span className="ml-2 hidden sm:inline">New Category</span>
                 </Button>
               ) : null}
-              {canManageResources && activeCategory !== "All" && activeCategoryRecord ? (
+              {canManageResources &&
+              activeCategory !== "All" &&
+              activeCategoryRecord ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -1073,7 +1156,9 @@ export default function Page() {
                   <span className="sm:hidden">Symbol</span>
                 </Button>
               ) : null}
-              {canManageResources && activeCategory !== "All" && activeCategoryRecord ? (
+              {canManageResources &&
+              activeCategory !== "All" &&
+              activeCategoryRecord ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -1084,15 +1169,19 @@ export default function Page() {
                   <span className="ml-2 hidden sm:inline">Delete Category</span>
                 </Button>
               ) : null}
-              <Button variant="outline" size="sm" onClick={() => void handleSignOut()}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleSignOut()}
+              >
                 <LogOut className="h-4 w-4" />
                 <span className="ml-2 hidden sm:inline">Sign out</span>
               </Button>
               {canManageResources ? (
                 <Button
                   onClick={() => {
-                    setEditingResource(null)
-                    setModalOpen(true)
+                    setEditingResource(null);
+                    setModalOpen(true);
                   }}
                   className="gap-2"
                   size="sm"
@@ -1105,7 +1194,11 @@ export default function Page() {
             </>
           ) : (
             <>
-              <Button variant="outline" size="sm" onClick={() => openAuthDialog("login")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openAuthDialog("login")}
+              >
                 <LogIn className="h-4 w-4" />
                 <span className="ml-2 hidden sm:inline">Sign in</span>
               </Button>
@@ -1144,8 +1237,8 @@ export default function Page() {
               categories={categories}
               activeCategory={activeCategory}
               onCategoryChange={(category) => {
-                setActiveCategory(category)
-                setSidebarOpen(false)
+                setActiveCategory(category);
+                setSidebarOpen(false);
               }}
               resourceCounts={resourceCounts}
               categorySymbols={categorySymbols}
@@ -1153,18 +1246,25 @@ export default function Page() {
           </SheetContent>
         </Sheet>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6" aria-label="Resource cards">
+        <main
+          className="flex-1 overflow-y-auto p-4 lg:p-6"
+          aria-label="Resource cards"
+        >
           {isLoading ? (
             <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <p className="text-sm text-muted-foreground">Loading resources...</p>
+              <p className="text-sm text-muted-foreground">
+                Loading resources...
+              </p>
             </div>
           ) : loadError ? (
             <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
               <h2 className="text-lg font-semibold text-foreground">
                 Unable to load resources
               </h2>
-              <p className="max-w-xl text-sm text-muted-foreground">{loadError}</p>
+              <p className="max-w-xl text-sm text-muted-foreground">
+                {loadError}
+              </p>
               <Button onClick={() => void fetchResources()} size="sm">
                 Retry
               </Button>
@@ -1191,8 +1291,8 @@ export default function Page() {
               {!searchQuery && canManageResources ? (
                 <Button
                   onClick={() => {
-                    setEditingResource(null)
-                    setModalOpen(true)
+                    setEditingResource(null);
+                    setModalOpen(true);
                   }}
                   className="gap-2"
                 >
@@ -1201,7 +1301,10 @@ export default function Page() {
                 </Button>
               ) : null}
               {!searchQuery && !isAuthenticated ? (
-                <Button onClick={() => openAuthDialog("login")} className="gap-2">
+                <Button
+                  onClick={() => openAuthDialog("login")}
+                  className="gap-2"
+                >
                   <LogIn className="h-4 w-4" />
                   Sign in
                 </Button>
@@ -1228,11 +1331,11 @@ export default function Page() {
       <Dialog
         open={createCategoryDialogOpen}
         onOpenChange={(open) => {
-          setCreateCategoryDialogOpen(open)
+          setCreateCategoryDialogOpen(open);
           if (!open) {
-            setNewCategoryName("")
-            setNewCategorySymbol("")
-            setIsCategoryMutating(false)
+            setNewCategoryName("");
+            setNewCategorySymbol("");
+            setIsCategoryMutating(false);
           }
         }}
       >
@@ -1314,10 +1417,16 @@ export default function Page() {
               <TabsTrigger value="login">Sign in</TabsTrigger>
               <TabsTrigger value="register">Register</TabsTrigger>
             </TabsList>
-            <TabsContent value="login" className="m-0 text-xs text-muted-foreground">
+            <TabsContent
+              value="login"
+              className="m-0 text-xs text-muted-foreground"
+            >
               Use your existing credentials.
             </TabsContent>
-            <TabsContent value="register" className="m-0 text-xs text-muted-foreground">
+            <TabsContent
+              value="register"
+              className="m-0 text-xs text-muted-foreground"
+            >
               Create credentials for protected actions.
             </TabsContent>
           </Tabs>
@@ -1325,8 +1434,8 @@ export default function Page() {
           <form
             className="flex flex-col gap-3"
             onSubmit={(event) => {
-              event.preventDefault()
-              void handleAuthSubmit()
+              event.preventDefault();
+              void handleAuthSubmit();
             }}
           >
             <div className="flex flex-col gap-1.5">
@@ -1353,7 +1462,9 @@ export default function Page() {
               <Input
                 id="auth-password"
                 type="password"
-                autoComplete={authMode === "register" ? "new-password" : "current-password"}
+                autoComplete={
+                  authMode === "register" ? "new-password" : "current-password"
+                }
                 value={authPassword}
                 onChange={(event) => setAuthPassword(event.target.value)}
                 disabled={isAuthSubmitting}
@@ -1389,10 +1500,10 @@ export default function Page() {
       <Dialog
         open={promoteDialogOpen}
         onOpenChange={(open) => {
-          setPromoteDialogOpen(open)
+          setPromoteDialogOpen(open);
           if (!open) {
-            setPromoteIdentifier("")
-            setIsPromotingAdmin(false)
+            setPromoteIdentifier("");
+            setIsPromotingAdmin(false);
           }
         }}
       >
@@ -1439,5 +1550,5 @@ export default function Page() {
 
       <Toaster position="bottom-right" theme="dark" />
     </div>
-  )
+  );
 }

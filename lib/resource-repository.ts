@@ -9,18 +9,16 @@ import {
   resourceCategories,
   resourceLinks,
   resourceTags,
-} from "@/lib/db-schema"
-import { ensureSchema, getDb } from "@/lib/db"
-import type {
-  ResourceAuditAction,
-  ResourceAuditActor,
-  ResourceAuditLogEntry,
-  ResourceCard,
-  ResourceCategory,
-  ResourceInput,
+import {
+  DEFAULT_RESOURCE_CATEGORY_NAME,
+  FALLBACK_RESOURCE_CATEGORY_NAME,
+  type ResourceAuditAction,
+  type ResourceAuditActor,
+  type ResourceAuditLogEntry,
+  type ResourceCard,
+  type ResourceCategory,
+  type ResourceInput,
 } from "@/lib/resources"
-
-const DEFAULT_RESOURCE_CATEGORY_NAME = "General"
 const FALLBACK_RESOURCE_CATEGORY_NAME = "Uncategorized"
 
 export class ResourceNotFoundError extends Error {
@@ -87,7 +85,7 @@ function normalizeTimestamp(value: Date | string | null): string | null {
   }
 
   return value
-}
+export function normalizeCategoryName(value: string): string {
 
 function normalizeAuditAction(value: string): ResourceAuditAction {
   return value === "restored" ? "restored" : "archived"
@@ -101,24 +99,25 @@ function normalizeCategorySymbol(value: string | null | undefined): string | nul
   if (typeof value !== "string") {
     return null
   }
-
-  const normalized = value.trim()
-  if (!normalized) {
+  if (!error || typeof error !== "object") {
     return null
   }
 
-  return normalized.slice(0, 16)
-}
+  const anyError = error as { code?: unknown; cause?: unknown }
 
-function normalizeTagName(value: string): string {
-  return value.replace(/\s+/g, " ").trim()
-}
+  if (typeof anyError.code === "string") {
+    return anyError.code
+  }
 
-function normalizeCategoryRow(row: ResourceCategoryRow): ResourceCategory {
-  return {
-    id: row.id,
-    name: row.name,
-    symbol: row.symbol,
+  const cause = anyError.cause
+  if (!cause || typeof cause !== "object") {
+    return null
+  }
+
+  const causeWithCode = cause as { code?: unknown }
+  if (typeof causeWithCode.code === "string") {
+    return causeWithCode.code
+  }
     createdAt: normalizeTimestamp(row.createdAt) ?? new Date(0).toISOString(),
     updatedAt: normalizeTimestamp(row.updatedAt) ?? new Date(0).toISOString(),
   }
