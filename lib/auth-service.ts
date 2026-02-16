@@ -160,42 +160,57 @@ async function sendEmailVerificationEmail(
     }
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: fromAddress,
-      to: [recipientEmail],
-      subject: "Confirm your email address",
-      text: [
-        "Welcome.",
-        "",
-        "Confirm your email address to activate your account:",
-        verificationUrl,
-        "",
-        `This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.`,
-      ].join("\n"),
-      html: [
-        "<p>Welcome.</p>",
-        "<p>Confirm your email address to activate your account:</p>",
-        `<p><a href="${verificationUrl}">${verificationUrl}</a></p>`,
-        `<p>This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.</p>`,
-      ].join(""),
-    }),
-  })
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: [recipientEmail],
+        subject: "Confirm your email address",
+        text: [
+          "Welcome.",
+          "",
+          "Confirm your email address to activate your account:",
+          verificationUrl,
+          "",
+          `This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.`,
+        ].join("\n"),
+        html: [
+          "<p>Welcome.</p>",
+          "<p>Confirm your email address to activate your account:</p>",
+          `<p><a href="${verificationUrl}">${verificationUrl}</a></p>`,
+          `<p>This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.</p>`,
+        ].join(""),
+      }),
+    })
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(
-      `Failed to send verification email (${response.status}): ${text || "No response body."}`
+    if (!response.ok) {
+      const text = await response.text()
+      console.error(
+        `[auth] resend delivery failed (${response.status}) for ${recipientEmail}: ${text || "No response body."}`
+      )
+    } else {
+      return {
+        mode: "resend",
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    console.error(
+      `[auth] resend delivery exception for ${recipientEmail}: ${message}`
     )
   }
 
+  console.info(
+    `[auth] verification email fallback for ${recipientEmail}: ${verificationUrl}`
+  )
   return {
-    mode: "resend",
+    mode: "mock",
+    previewUrl: verificationUrl,
   }
 }
 
