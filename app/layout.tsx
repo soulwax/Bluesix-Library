@@ -17,7 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Knowledge - Developer Resource Library",
+  title: "Bluesix - Resource Library",
   description:
     "Personal dashboard to browse, organize, and access your developer resources without tab chaos.",
 };

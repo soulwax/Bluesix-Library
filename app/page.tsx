@@ -1322,7 +1322,7 @@ export default function Page() {
           </div>
           <div className="hidden items-center gap-2.5 sm:flex">
             <h1 className="text-base font-semibold leading-tight text-foreground">
-              Knowledge
+              BlueSix
             </h1>
             {isAuthenticated && session?.user?.email ? (
               <span className="inline-flex max-w-56 flex-col rounded-xl border border-border bg-secondary px-2.5 py-1 leading-tight text-secondary-foreground">

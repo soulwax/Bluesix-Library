@@ -1,10 +1,106 @@
 "use client"
 
+import { useMemo, useState } from "react"
+
 import type { ResourceCard } from "@/lib/resources"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { getTagToneClasses } from "@/lib/tag-styles"
 import { ExternalLink, Pencil, Trash2 } from "lucide-react"
+
+interface LinkPresentation {
+  hostname: string | null
+  faviconCandidates: string[]
+}
+
+function getLinkPresentation(url: string): LinkPresentation {
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname
+
+    return {
+      hostname,
+      faviconCandidates: [
+        `${parsed.origin}/favicon.ico`,
+        `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
+          hostname
+        )}&sz=64`,
+      ],
+    }
+  } catch {
+    return {
+      hostname: null,
+      faviconCandidates: [],
+    }
+  }
+}
+
+function ResourceLinkCompactItem({
+  label,
+  note,
+  url,
+}: {
+  label: string
+  note?: string | null
+  url: string
+}) {
+  const linkPresentation = useMemo(() => getLinkPresentation(url), [url])
+  const [faviconIndex, setFaviconIndex] = useState(0)
+  const [faviconUnavailable, setFaviconUnavailable] = useState(false)
+
+  const faviconSrc = linkPresentation.faviconCandidates[faviconIndex]
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group/link flex items-start gap-2 rounded-md border border-border/70 bg-secondary/20 p-2 transition-colors hover:border-primary/30 hover:bg-secondary/40"
+    >
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/70 bg-background">
+        {!faviconUnavailable && faviconSrc ? (
+          <img
+            src={faviconSrc}
+            alt=""
+            className="h-4 w-4"
+            loading="lazy"
+            onError={() => {
+              if (
+                faviconIndex <
+                linkPresentation.faviconCandidates.length - 1
+              ) {
+                setFaviconIndex((previous) => previous + 1)
+                return
+              }
+
+              setFaviconUnavailable(true)
+            }}
+          />
+        ) : (
+          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground transition-colors group-hover/link:text-primary" />
+        )}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-2">
+          <span className="truncate font-mono text-sm text-foreground transition-colors group-hover/link:text-primary">
+            {label}
+          </span>
+          {linkPresentation.hostname ? (
+            <span className="hidden truncate text-[11px] text-muted-foreground sm:inline">
+              {linkPresentation.hostname}
+            </span>
+          ) : null}
+        </div>
+        {note ? (
+          <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+            {note}
+          </p>
+        ) : null}
+      </div>
+    </a>
+  )
+}
 
 interface ResourceCardProps {
   resource: ResourceCard
@@ -79,24 +175,11 @@ export function ResourceCardItem({
       <ul className="flex flex-col gap-2.5" role="list">
         {resource.links.map((link) => (
           <li key={link.id}>
-            <a
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group/link -mx-1.5 flex items-start gap-2 rounded-md p-1.5 transition-colors hover:bg-secondary"
-            >
-              <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground group-hover/link:text-primary" />
-              <div className="min-w-0 flex-1">
-                <span className="font-mono text-sm text-foreground transition-colors group-hover/link:text-primary">
-                  {link.label}
-                </span>
-                {link.note && (
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    {link.note}
-                  </p>
-                )}
-              </div>
-            </a>
+            <ResourceLinkCompactItem
+              label={link.label}
+              note={link.note}
+              url={link.url}
+            />
           </li>
         ))}
       </ul>
