@@ -55,7 +55,6 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BookOpen,
-  ClipboardPaste,
   FilterX,
   FolderOpen,
   FolderPlus,
@@ -142,24 +141,7 @@ interface PromoteAdminResponse extends ApiErrorResponse {
   };
 }
 
-interface LinkMetadataResponse extends ApiErrorResponse {
-  url?: string;
-  label?: string;
-  briefDescription?: string | null;
-  tags?: string[];
-  suggestedCategory?: string | null;
-  source?: "perplexity" | "fallback";
-}
-
 type AuthMode = "login" | "register";
-type PasteHoverTarget =
-  | {
-      type: "card";
-      resourceId: string;
-      category: string;
-      workspaceId: string;
-    }
-  | { type: "category"; category: string | "All"; workspaceId: string };
 
 async function readJson<T>(response: Response): Promise<T | null> {
   try {
@@ -167,51 +149,6 @@ async function readJson<T>(response: Response): Promise<T | null> {
   } catch {
     return null;
   }
-}
-
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function extractFirstUrl(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s<>"')\}\]]+/i);
-  return match?.[0] ?? null;
-}
-
-function isEditablePasteTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) {
-    return false;
-  }
-
-  return Boolean(
-    target.closest(
-      "input, textarea, select, [contenteditable='true'], [contenteditable='']",
-    ),
-  );
-}
-
-function mergeTags(existingTags: string[], nextTags: string[]): string[] {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-
-  for (const rawTag of [...existingTags, ...nextTags]) {
-    const normalized = normalizeWhitespace(rawTag).slice(0, 40);
-    if (!normalized) {
-      continue;
-    }
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    merged.push(normalized);
-
-    if (merged.length >= 24) {
-      break;
-    }
-  }
-
-  return merged;
 }
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
@@ -303,9 +240,6 @@ export default function Page() {
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
   const [promoteIdentifier, setPromoteIdentifier] = useState("");
   const [isPromotingAdmin, setIsPromotingAdmin] = useState(false);
-  const [isAiPasteRunning, setIsAiPasteRunning] = useState(false);
-  const [pasteHoverTarget, setPasteHoverTarget] =
-    useState<PasteHoverTarget | null>(null);
   const {
     schemes: colorSchemes,
     currentSchemeIndex,
@@ -1438,44 +1372,6 @@ export default function Page() {
     ],
   );
 
-  const handleCardHoverChange = useCallback((resource: ResourceCard | null) => {
-    if (!resource) {
-      setPasteHoverTarget((previous) =>
-        previous?.type === "card" ? null : previous,
-      );
-      return;
-    }
-
-    setPasteHoverTarget({
-      type: "card",
-      resourceId: resource.id,
-      category: resource.category,
-      workspaceId: resource.workspaceId,
-    });
-  }, []);
-
-  const handleCategoryHoverChange = useCallback(
-    (category: string | "All" | null) => {
-      if (!category) {
-        setPasteHoverTarget((previous) =>
-          previous?.type === "category" ? null : previous,
-        );
-        return;
-      }
-
-      if (!activeWorkspaceId) {
-        return;
-      }
-
-      setPasteHoverTarget({
-        type: "category",
-        category,
-        workspaceId: activeWorkspaceId,
-      });
-    },
-    [activeWorkspaceId],
-  );
-
   const handleDesktopSidebarResizeStart = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0 || !isDesktopSidebarEnabled()) {
@@ -1540,311 +1436,6 @@ export default function Page() {
     },
     [isDesktopSidebarEnabled],
   );
-
-  const handlePasteIntoHoverTarget = useCallback(
-    async (rawUrl: string, target: PasteHoverTarget) => {
-      if (target.type === "category" && !canManageResources) {
-        toast.error("Insufficient permissions", {
-          description:
-            "You do not have access to create resources in categories.",
-        });
-        return;
-      }
-
-      const currentCardTarget =
-        target.type === "card"
-          ? resources.find((resource) => resource.id === target.resourceId)
-          : null;
-      if (target.type === "card" && !currentCardTarget) {
-        toast.error("Card not found", {
-          description: "The hovered card no longer exists.",
-        });
-        return;
-      }
-      if (target.type === "card" && !canManageResourceCard(currentCardTarget)) {
-        toast.error("Insufficient permissions", {
-          description: "You can only paste links into cards that you own.",
-        });
-        return;
-      }
-
-      if (isSaving || isAiPasteRunning) {
-        return;
-      }
-
-      setIsAiPasteRunning(true);
-
-      try {
-        const metadataResponse = await fetch("/api/ai/link-metadata", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            url: rawUrl,
-            contextCategory: target.category,
-          }),
-        });
-        const metadataPayload =
-          await readJson<LinkMetadataResponse>(metadataResponse);
-
-        if (!metadataResponse.ok || !metadataPayload?.url) {
-          throw new Error(
-            metadataPayload?.error ?? "Failed to generate link metadata.",
-          );
-        }
-
-        const url = metadataPayload.url;
-        const label = normalizeWhitespace(metadataPayload.label ?? "").slice(
-          0,
-          120,
-        );
-        const briefDescription = normalizeWhitespace(
-          metadataPayload.briefDescription ?? "",
-        ).slice(0, 280);
-        const aiTags = mergeTags([], metadataPayload.tags ?? []);
-        const linkInput = {
-          url,
-          label: label || url,
-          note: briefDescription || undefined,
-        };
-
-        if (target.type === "card" && currentCardTarget) {
-          const currentResource = currentCardTarget;
-
-          const alreadyHasLink = currentResource.links.some(
-            (link) => link.url.toLowerCase() === url.toLowerCase(),
-          );
-          if (alreadyHasLink) {
-            toast.message("Link already exists in this card.");
-            return;
-          }
-
-          const nextInput: ResourceInput = {
-            workspaceId: currentResource.workspaceId,
-            category: currentResource.category,
-            tags: mergeTags(currentResource.tags ?? [], aiTags),
-            links: [...currentResource.links, linkInput].map((link) => ({
-              url: link.url,
-              label: link.label,
-              note: link.note ?? undefined,
-            })),
-          };
-
-          const saveResponse = await fetch(
-            `/api/resources/${currentResource.id}`,
-            {
-              method: "PUT",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(nextInput),
-            },
-          );
-          const savePayload = await readJson<ResourceResponse>(saveResponse);
-
-          if (!saveResponse.ok || !savePayload?.resource) {
-            throw new Error(savePayload?.error ?? "Failed to update card.");
-          }
-
-          const savedResource = savePayload.resource;
-          if (savePayload.mode) {
-            setDataMode(savePayload.mode);
-          }
-
-          setResources((previous) =>
-            previous.map((resource) =>
-              resource.id === savedResource.id ? savedResource : resource,
-            ),
-          );
-
-          toast.success("Link pasted into card", {
-            description: `${linkInput.label} added to ${currentResource.category}.`,
-          });
-        } else {
-          const targetCategory =
-            target.category !== "All"
-              ? target.category
-              : normalizeWhitespace(
-                  metadataPayload.suggestedCategory ||
-                    activeCategory ||
-                    "General",
-                );
-
-          const createInput: ResourceInput = {
-            workspaceId: target.workspaceId,
-            category: targetCategory,
-            tags: aiTags,
-            links: [linkInput],
-          };
-
-          const saveResponse = await fetch("/api/resources", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(createInput),
-          });
-          const savePayload = await readJson<ResourceResponse>(saveResponse);
-
-          if (!saveResponse.ok || !savePayload?.resource) {
-            throw new Error(savePayload?.error ?? "Failed to create resource.");
-          }
-
-          const savedResource = savePayload.resource;
-          if (savePayload.mode) {
-            setDataMode(savePayload.mode);
-          }
-
-          setResources((previous) => [savedResource, ...previous]);
-
-          toast.success("Link pasted into category", {
-            description: `${linkInput.label} added under ${targetCategory}.`,
-          });
-        }
-
-        if (metadataPayload.source === "fallback") {
-          toast.message("AI fallback used", {
-            description:
-              "Perplexity response was unavailable, so basic metadata was used.",
-          });
-        }
-
-        void fetchCategories();
-      } catch (error) {
-        toast.error("Paste failed", {
-          description:
-            error instanceof Error
-              ? error.message
-              : "Could not paste this URL.",
-        });
-      } finally {
-        setIsAiPasteRunning(false);
-      }
-    },
-    [
-      activeCategory,
-      canManageResourceCard,
-      canManageResources,
-      fetchCategories,
-      isAiPasteRunning,
-      isSaving,
-      resources,
-    ],
-  );
-
-  const readFirstUrlFromClipboard = useCallback(async (): Promise<string> => {
-    if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
-      throw new Error("Clipboard access is unavailable in this browser.");
-    }
-
-    const text = await navigator.clipboard.readText();
-    const url = extractFirstUrl(text);
-    if (!url) {
-      throw new Error("Clipboard does not contain a valid URL.");
-    }
-
-    return url;
-  }, []);
-
-  const handlePasteFromClipboardToTarget = useCallback(
-    async (target: PasteHoverTarget) => {
-      if (target.type === "category" && !canManageResources) {
-        toast.error("Insufficient permissions", {
-          description:
-            "You do not have access to create resources in categories.",
-        });
-        return;
-      }
-
-      if (target.type === "card") {
-        const currentResource = resources.find(
-          (resource) => resource.id === target.resourceId,
-        );
-        if (!currentResource || !canManageResourceCard(currentResource)) {
-          toast.error("Insufficient permissions", {
-            description: "You can only paste links into cards that you own.",
-          });
-          return;
-        }
-      }
-
-      try {
-        const url = await readFirstUrlFromClipboard();
-        await handlePasteIntoHoverTarget(url, target);
-      } catch (error) {
-        toast.error("Clipboard paste failed", {
-          description:
-            error instanceof Error
-              ? error.message
-              : "Could not read a URL from your clipboard.",
-        });
-      }
-    },
-    [
-      canManageResourceCard,
-      canManageResources,
-      handlePasteIntoHoverTarget,
-      readFirstUrlFromClipboard,
-      resources,
-    ],
-  );
-
-  const handlePasteIntoCardFromClipboard = useCallback(
-    (resource: ResourceCard) => {
-      void handlePasteFromClipboardToTarget({
-        type: "card",
-        resourceId: resource.id,
-        category: resource.category,
-        workspaceId: resource.workspaceId,
-      });
-    },
-    [handlePasteFromClipboardToTarget],
-  );
-
-  const handlePasteIntoCategoryFromClipboard = useCallback(
-    (category: string | "All") => {
-      if (!activeWorkspaceId) {
-        toast.error("Workspace unavailable", {
-          description: "Select a workspace first.",
-        });
-        return;
-      }
-
-      void handlePasteFromClipboardToTarget({
-        type: "category",
-        category,
-        workspaceId: activeWorkspaceId,
-      });
-    },
-    [activeWorkspaceId, handlePasteFromClipboardToTarget],
-  );
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const handleWindowPaste = (event: ClipboardEvent) => {
-      if (!pasteHoverTarget || isEditablePasteTarget(event.target)) {
-        return;
-      }
-
-      const text = event.clipboardData?.getData("text/plain") ?? "";
-      const pastedUrl = extractFirstUrl(text);
-      if (!pastedUrl) {
-        return;
-      }
-
-      event.preventDefault();
-      void handlePasteIntoHoverTarget(pastedUrl, pasteHoverTarget);
-    };
-
-    window.addEventListener("paste", handleWindowPaste);
-    return () => {
-      window.removeEventListener("paste", handleWindowPaste);
-    };
-  }, [handlePasteIntoHoverTarget, pasteHoverTarget]);
 
   const handleRestoreArchivedResource = useCallback(
     async (resourceId: string) => {
@@ -2089,6 +1680,11 @@ export default function Page() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {!isAuthenticated && sessionStatus !== "loading" ? (
+            <div className="hidden max-w-80 items-center rounded-full border border-border bg-secondary/40 px-3 py-1 text-[11px] text-muted-foreground xl:flex">
+              Sign in to save workspaces, keep categories, and sync your library.
+            </div>
+          ) : null}
           {canManageResources ? (
             <div className="hidden max-w-64 items-center truncate rounded-full border border-border bg-secondary/40 px-3 py-1 text-[11px] text-muted-foreground xl:flex">
               {isAiPasteRunning

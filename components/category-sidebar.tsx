@@ -27,7 +27,6 @@ import {
   Database,
   ShieldCheck,
   Layers,
-  ClipboardPaste,
   Copy,
   FolderPlus,
   Pencil,
@@ -57,15 +56,12 @@ interface CategorySidebarProps {
   categories: string[];
   activeCategory: string | "All";
   onCategoryChange: (cat: string | "All") => void;
-  onHoverCategoryChange?: (category: string | "All" | null) => void;
   resourceCounts: Record<string, number>;
   categorySymbols?: Record<string, string | undefined>;
   canManageCategories?: boolean;
-  canPasteIntoCategory?: boolean;
   onCreateCategory?: () => void;
   onEditCategorySymbol?: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
-  onPasteIntoCategory?: (category: string | "All") => void;
 }
 
 function resolveCategoryIcon(category: string): LucideIcon {
@@ -89,15 +85,12 @@ export function CategorySidebar({
   categories,
   activeCategory,
   onCategoryChange,
-  onHoverCategoryChange,
   resourceCounts,
   categorySymbols = {},
   canManageCategories = false,
-  canPasteIntoCategory = false,
   onCreateCategory,
   onEditCategorySymbol,
   onDeleteCategory,
-  onPasteIntoCategory,
 }: CategorySidebarProps) {
   const copyText = useCallback(async (value: string, label: string) => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -150,8 +143,6 @@ export function CategorySidebar({
                       <button
                         type="button"
                         onClick={() => onCategoryChange(cat)}
-                        onMouseEnter={() => onHoverCategoryChange?.(cat)}
-                        onMouseLeave={() => onHoverCategoryChange?.(null)}
                         aria-current={isActive ? "page" : undefined}
                         className={cn(
                           "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
@@ -186,9 +177,6 @@ export function CategorySidebar({
                       className="flex flex-col gap-0.5"
                     >
                       <span className="font-medium">{tooltipLabel}</span>
-                      <span className="text-xs text-muted-foreground">
-                        Hover + paste (Ctrl/Cmd+V) to paste a URL
-                      </span>
                     </TooltipContent>
                   </Tooltip>
                 </div>
@@ -217,41 +205,29 @@ export function CategorySidebar({
                   Copy category name
                 </ContextMenuItem>
 
-                {canPasteIntoCategory || canManageCategories ? (
+                {canManageCategories ? (
                   <>
                     <ContextMenuSeparator />
-                    {canPasteIntoCategory ? (
+                    <ContextMenuItem onSelect={() => onCreateCategory?.()}>
+                      <FolderPlus className="mr-2 h-4 w-4" />
+                      Create category
+                    </ContextMenuItem>
+                    {cat !== "All" ? (
                       <ContextMenuItem
-                        onSelect={() => onPasteIntoCategory?.(cat)}
+                        onSelect={() => onEditCategorySymbol?.(cat)}
                       >
-                        <ClipboardPaste className="mr-2 h-4 w-4" />
-                        Paste URL into category
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit symbol
                       </ContextMenuItem>
                     ) : null}
-                    {canManageCategories ? (
-                      <>
-                        <ContextMenuItem onSelect={() => onCreateCategory?.()}>
-                          <FolderPlus className="mr-2 h-4 w-4" />
-                          Create category
-                        </ContextMenuItem>
-                        {cat !== "All" ? (
-                          <ContextMenuItem
-                            onSelect={() => onEditCategorySymbol?.(cat)}
-                          >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit symbol
-                          </ContextMenuItem>
-                        ) : null}
-                        {cat !== "All" ? (
-                          <ContextMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onSelect={() => onDeleteCategory?.(cat)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete category
-                          </ContextMenuItem>
-                        ) : null}
-                      </>
+                    {cat !== "All" ? (
+                      <ContextMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => onDeleteCategory?.(cat)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete category
+                      </ContextMenuItem>
                     ) : null}
                   </>
                 ) : null}

@@ -21,7 +21,6 @@ import {
 import { getTagToneClasses } from "@/lib/tag-styles"
 import {
   ClipboardCopy,
-  ClipboardPaste,
   ExternalLink,
   Pencil,
   Trash2,
@@ -108,8 +107,6 @@ interface ResourceCardProps {
   categorySymbol?: string | null
   onDelete: (id: string) => void
   onEdit: (resource: ResourceCard) => void
-  onPasteLinkIntoCard?: (resource: ResourceCard) => void
-  onHoverChange?: (resource: ResourceCard | null) => void
   isDeleting?: boolean
   canManage?: boolean
 }
@@ -119,8 +116,6 @@ export function ResourceCardItem({
   categorySymbol,
   onDelete,
   onEdit,
-  onPasteLinkIntoCard,
-  onHoverChange,
   isDeleting = false,
   canManage = false,
 }: ResourceCardProps) {
@@ -184,8 +179,6 @@ export function ResourceCardItem({
       <ContextMenuTrigger asChild>
         <div
           className="group flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:shadow-primary/5"
-          onMouseEnter={() => onHoverChange?.(resource)}
-          onMouseLeave={() => onHoverChange?.(null)}
           onContextMenuCapture={handleContextMenuCapture}
           onContextMenu={handleContextMenu}
         >
@@ -349,13 +342,6 @@ export function ResourceCardItem({
             >
               <Pencil className="mr-2 h-4 w-4" />
               Edit resource card
-            </ContextMenuItem>
-            <ContextMenuItem
-              disabled={isDeleting}
-              onSelect={() => onPasteLinkIntoCard?.(resource)}
-            >
-              <ClipboardPaste className="mr-2 h-4 w-4" />
-              Paste URL into this card
             </ContextMenuItem>
             <ContextMenuItem
               className="text-destructive focus:text-destructive"
