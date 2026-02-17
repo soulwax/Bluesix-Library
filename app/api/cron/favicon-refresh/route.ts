@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 
 import { ensureSchema } from "@/lib/db"
 import { listStaleOrMissingHostnames, upsertFaviconCache } from "@/lib/favicon-repository"
-import { resolveFaviconUrl } from "@/lib/favicon-service"
+import { resolveFavicon } from "@/lib/favicon-service"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -37,9 +37,12 @@ export async function GET(request: Request) {
 
     const results = await Promise.allSettled(
       hostnames.map(async (hostname) => {
-        const faviconUrl = await resolveFaviconUrl(hostname)
-        await upsertFaviconCache(hostname, faviconUrl)
-        return { hostname, faviconUrl }
+        const favicon = await resolveFavicon(hostname)
+        await upsertFaviconCache(hostname, favicon)
+        return {
+          hostname,
+          sourceUrl: favicon?.sourceUrl ?? null,
+        }
       })
     )
 

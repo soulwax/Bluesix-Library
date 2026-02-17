@@ -249,6 +249,9 @@ export const faviconCache = pgTable(
   {
     hostname: text("hostname").primaryKey(),
     faviconUrl: text("favicon_url"),
+    faviconContentType: text("favicon_content_type"),
+    faviconBase64: text("favicon_base64"),
+    faviconHash: text("favicon_hash"),
     lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }).notNull(),
     lastChangedAt: timestamp("last_changed_at", { withTimezone: true }).notNull(),
   },
@@ -256,6 +259,10 @@ export const faviconCache = pgTable(
     check(
       "favicon_cache_hostname_length_check",
       sql`char_length(${table.hostname}) <= 253`
+    ),
+    check(
+      "favicon_cache_hash_length_check",
+      sql`${table.faviconHash} IS NULL OR char_length(${table.faviconHash}) = 64`
     ),
     index("favicon_cache_last_checked_at_idx").on(table.lastCheckedAt),
   ]

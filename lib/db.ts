@@ -292,9 +292,27 @@ export async function ensureSchema() {
       CREATE TABLE IF NOT EXISTS favicon_cache (
         hostname TEXT PRIMARY KEY CHECK (char_length(hostname) <= 253),
         favicon_url TEXT,
+        favicon_content_type TEXT,
+        favicon_base64 TEXT,
+        favicon_hash TEXT,
         last_checked_at TIMESTAMPTZ NOT NULL,
         last_changed_at TIMESTAMPTZ NOT NULL
       )
+    `;
+
+    await sql`
+      ALTER TABLE favicon_cache
+      ADD COLUMN IF NOT EXISTS favicon_content_type TEXT
+    `;
+
+    await sql`
+      ALTER TABLE favicon_cache
+      ADD COLUMN IF NOT EXISTS favicon_base64 TEXT
+    `;
+
+    await sql`
+      ALTER TABLE favicon_cache
+      ADD COLUMN IF NOT EXISTS favicon_hash TEXT
     `;
 
     await sql`

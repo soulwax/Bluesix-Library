@@ -11,8 +11,12 @@ import {
   resourceLinks,
   resourceTags,
 } from "@/lib/db-schema"
-import { getFaviconUrlsByHostnames, upsertFaviconCache } from "@/lib/favicon-repository"
-import { hostnameFromUrl, resolveFaviconUrl, uniqueHostnames } from "@/lib/favicon-service"
+import {
+  getFaviconUrlsByHostnames,
+  listHostnamesMissingStoredFavicons,
+  upsertFaviconCache,
+} from "@/lib/favicon-repository"
+import { hostnameFromUrl, resolveFavicon, uniqueHostnames } from "@/lib/favicon-service"
 import type {
   ResourceAuditAction,
   ResourceAuditActor,
@@ -255,20 +259,20 @@ async function attachTags(resources: ResourceCard[]): Promise<ResourceCard[]> {
 }
 
 /**
- * Fire-and-forget: resolve favicons for any hostnames that aren't yet cached.
+ * Fire-and-forget: resolve favicons for any hostnames that do not yet have
+ * persisted image payloads in the cache.
  * Errors are swallowed so they never block the main save path.
  */
 async function seedFaviconCacheForUrls(urls: string[]): Promise<void> {
   const hostnames = uniqueHostnames(urls)
   if (hostnames.length === 0) return
 
-  const existing = await getFaviconUrlsByHostnames(hostnames)
-  const uncached = hostnames.filter((h) => !existing.has(h))
+  const missingImagePayloads = await listHostnamesMissingStoredFavicons(hostnames)
 
   await Promise.allSettled(
-    uncached.map(async (hostname) => {
-      const faviconUrl = await resolveFaviconUrl(hostname)
-      await upsertFaviconCache(hostname, faviconUrl)
+    missingImagePayloads.map(async (hostname) => {
+      const favicon = await resolveFavicon(hostname)
+      await upsertFaviconCache(hostname, favicon)
     })
   )
 }

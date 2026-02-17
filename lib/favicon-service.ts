@@ -1,6 +1,16 @@
 import "server-only"
 
+import { createHash } from "node:crypto"
+
 const RESOLVE_TIMEOUT_MS = 5_000
+const MAX_FAVICON_BYTES = 512 * 1024
+
+export interface ResolvedFaviconPayload {
+  sourceUrl: string
+  contentType: string
+  contentBase64: string
+  contentHash: string
+}
 
 export function hostnameFromUrl(url: string): string | null {
   try {
@@ -20,38 +30,109 @@ export function uniqueHostnames(urls: string[]): string[] {
   return [...seen]
 }
 
-/**
- * Try to resolve the best favicon URL for a given hostname.
- *
- * Resolution order:
- *   1. https://{hostname}/favicon.ico   (verified via HEAD)
- *   2. Google favicon service           (reliable fallback, always resolves)
- *
- * Returns null only if the hostname is unparseable.
- */
-export async function resolveFaviconUrl(hostname: string): Promise<string | null> {
-  if (!hostname) return null
-
-  const directUrl = `https://${hostname}/favicon.ico`
-
-  try {
-    const response = await fetch(directUrl, {
-      method: "HEAD",
-      signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
-      // Avoid sending cookies / credentials to third-party hosts
-      credentials: "omit",
-    })
-
-    if (response.ok) {
-      const ct = response.headers.get("content-type") ?? ""
-      if (ct.startsWith("image/") || ct.includes("icon")) {
-        return directUrl
-      }
+function normalizeContentType(
+  value: string | null,
+  sourceUrl: string
+): string | null {
+  const fromHeader = (value ?? "").split(";")[0]?.trim().toLowerCase()
+  if (fromHeader) {
+    if (fromHeader.startsWith("image/")) {
+      return fromHeader
     }
-  } catch {
-    // Network error or timeout — fall through to Google
+    if (fromHeader.includes("icon")) {
+      return "image/x-icon"
+    }
   }
 
-  // Reliable fallback: Google's favicon CDN
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`
+  if (sourceUrl.endsWith(".ico")) {
+    return "image/x-icon"
+  }
+  if (sourceUrl.endsWith(".svg")) {
+    return "image/svg+xml"
+  }
+  if (sourceUrl.endsWith(".png")) {
+    return "image/png"
+  }
+  if (sourceUrl.endsWith(".jpg") || sourceUrl.endsWith(".jpeg")) {
+    return "image/jpeg"
+  }
+  if (sourceUrl.endsWith(".webp")) {
+    return "image/webp"
+  }
+
+  return null
+}
+
+async function fetchFaviconAtUrl(
+  sourceUrl: string
+): Promise<Omit<ResolvedFaviconPayload, "sourceUrl"> | null> {
+  try {
+    const response = await fetch(sourceUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
+      credentials: "omit",
+      redirect: "follow",
+      cache: "no-store",
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    const declaredLength = Number.parseInt(
+      response.headers.get("content-length") ?? "",
+      10
+    )
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_FAVICON_BYTES) {
+      return null
+    }
+
+    const contentType = normalizeContentType(
+      response.headers.get("content-type"),
+      sourceUrl
+    )
+    if (!contentType) {
+      return null
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.length === 0 || bytes.length > MAX_FAVICON_BYTES) {
+      return null
+    }
+
+    return {
+      contentType,
+      contentBase64: bytes.toString("base64"),
+      contentHash: createHash("sha256").update(bytes).digest("hex"),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve and download favicon image data for a hostname.
+ * The payload is returned in its original image format plus MIME metadata.
+ */
+export async function resolveFavicon(hostname: string): Promise<ResolvedFaviconPayload | null> {
+  if (!hostname) return null
+
+  const candidateUrls = [
+    `https://${hostname}/favicon.ico`,
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`,
+  ]
+
+  for (const sourceUrl of candidateUrls) {
+    const resolved = await fetchFaviconAtUrl(sourceUrl)
+    if (!resolved) {
+      continue
+    }
+
+    return {
+      sourceUrl,
+      ...resolved,
+    }
+  }
+
+  return null
 }
