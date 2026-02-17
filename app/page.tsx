@@ -1682,7 +1682,8 @@ export default function Page() {
         <div className="ml-auto flex items-center gap-2">
           {!isAuthenticated && sessionStatus !== "loading" ? (
             <div className="hidden max-w-80 items-center rounded-full border border-border bg-secondary/40 px-3 py-1 text-[11px] text-muted-foreground xl:flex">
-              Sign in to save workspaces, keep categories, and sync your library.
+              Signing in lets you create your own workspace, administer your own
+              categories, and paste links with AI interpretation.
             </div>
           ) : null}
           <Popover>
