@@ -92,7 +92,7 @@ function DropSlot({
       onDragOver={enabled ? onDragOver : undefined}
       onDrop={enabled ? onDrop : undefined}
       className={cn(
-        "h-2 rounded-md transition-colors",
+        "h-1.5 rounded-full transition-colors",
         enabled
           ? active
             ? "bg-primary/40"
@@ -146,27 +146,32 @@ export function ResourceBoard({
   }
 
   return (
-    <div className="overflow-x-auto pb-2">
-      <div className="flex min-w-max items-start gap-4">
+    <div className="max-w-full overflow-x-hidden pb-2">
+      <div
+        className="[column-fill:_balance] [column-gap:0.75rem] sm:[column-gap:1rem]"
+        style={{
+          columnWidth: "20rem",
+        }}
+      >
         {columns.map((column) => {
           const items = resourcesByCategory.get(column.name) ?? []
 
           return (
             <section
               key={column.name}
-              className="flex w-[22rem] shrink-0 flex-col rounded-xl border border-border/70 bg-card/60"
+              className="mb-3 block w-full break-inside-avoid rounded-lg border border-border/45 bg-card/35 p-2.5 sm:mb-4"
             >
-              <header className="flex items-center justify-between border-b border-border/60 px-3 py-2">
+              <header className="flex items-center justify-between gap-2 px-1 pb-2">
                 <p className="truncate text-sm font-semibold text-foreground">
                   {column.symbol ? `${column.symbol} ` : ""}
                   {column.name}
                 </p>
-                <span className="rounded-md border border-border/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                <span className="rounded bg-background/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground ring-1 ring-border/45">
                   {items.length}
                 </span>
               </header>
 
-              <div className="flex min-h-20 flex-1 flex-col gap-2 p-3">
+              <div className="flex min-h-16 flex-1 flex-col gap-2 px-1 pb-1">
                 <DropSlot
                   enabled={dragEnabled && Boolean(dragState && column.id)}
                   active={
@@ -224,7 +229,6 @@ export function ResourceBoard({
                         resource={resource}
                         categoryId={resolvedCategoryId}
                         order={resource.order}
-                        categorySymbol={column.symbol}
                         onDelete={onDelete}
                         onEdit={onEdit}
                         canEditCategory={canEditCategoryByName(resource.category)}

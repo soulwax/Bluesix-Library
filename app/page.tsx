@@ -797,6 +797,9 @@ export default function Page() {
   const [desktopSidebarWidth, setDesktopSidebarWidth] = useState<number>(
     clampDesktopSidebarWidth(DESKTOP_SIDEBAR_DEFAULT_WIDTH),
   );
+  const [viewportWidth, setViewportWidth] = useState<number>(
+    FALLBACK_VIEWPORT_WIDTH,
+  );
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const hasLoadedSidebarWidthRef = useRef(false);
   const resizeRafIdRef = useRef<number | null>(null);
@@ -994,7 +997,7 @@ export default function Page() {
     isWorkspaceMutating,
     isWorkspaceRenaming,
   ]);
-  const desktopSidebarMaxWidth = getDesktopSidebarMaxWidth(getViewportWidth());
+  const desktopSidebarMaxWidth = getDesktopSidebarMaxWidth(viewportWidth);
   const updateSectionPreference = useCallback(
     (key: keyof SectionPreferences, checked: boolean) => {
       setSectionPreferences((previous) => ({
@@ -2026,6 +2029,9 @@ export default function Page() {
     }
 
     const syncSidebarWidth = (viewportWidth: number) => {
+      setViewportWidth((currentWidth) =>
+        currentWidth === viewportWidth ? currentWidth : viewportWidth,
+      );
       setDesktopSidebarWidth((currentWidth) =>
         clampDesktopSidebarWidth(currentWidth, viewportWidth),
       );
@@ -4857,7 +4863,7 @@ export default function Page() {
         <ContextMenu onOpenChange={handleLibraryContextMenuOpenChange}>
           <ContextMenuTrigger asChild>
             <main
-              className="flex-1 overflow-y-auto p-4 lg:p-6"
+              className="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6"
               aria-label="Resource cards"
             >
               <div

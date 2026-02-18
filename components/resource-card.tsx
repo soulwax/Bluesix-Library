@@ -81,12 +81,12 @@ function ResourceLinkCompactItem({
             }
           }}
           className={cn(
-            "group/link flex items-start gap-2 rounded-md border border-border/70 bg-secondary/20 p-2 transition-colors hover:border-primary/30 hover:bg-secondary/40",
+            "group/link flex items-start gap-2 rounded-md border border-border/40 bg-background/35 px-2 py-1.5 transition-colors hover:border-primary/25 hover:bg-background/55",
             draggable ? "cursor-grab active:cursor-grabbing" : "",
           )}
           style={isDragging ? { opacity: 0.5 } : undefined}
         >
-          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/70 bg-background">
+          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-background/70 ring-1 ring-border/40">
             {faviconUrl ? (
               <img
                 src={faviconUrl}
@@ -132,7 +132,6 @@ interface ResourceCardProps {
   resource: ResourceCard
   categoryId?: string | null
   order?: number
-  categorySymbol?: string | null
   onDelete: (id: string) => void
   onEdit: (resource: ResourceCard) => void
   onOpenLink?: (payload: {
@@ -169,7 +168,6 @@ export function ResourceCardItem({
   resource,
   categoryId,
   order,
-  categorySymbol,
   onDelete,
   onEdit,
   onOpenLink,
@@ -265,7 +263,7 @@ export function ResourceCardItem({
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            "group flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:shadow-primary/5",
+            "group flex flex-col rounded-md border border-border/45 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-background/60",
           )}
           data-resource-item-id={resource.id}
           data-resource-category-id={categoryId ?? undefined}
@@ -273,18 +271,10 @@ export function ResourceCardItem({
           onContextMenuCapture={handleContextMenuCapture}
           onContextMenu={handleContextMenu}
         >
-          <div className="mb-3 flex items-center justify-between">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="secondary" className="cursor-default font-medium">
-                  {categorySymbol ? `${categorySymbol} ` : ""}
-                  {resource.category}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                <span>Category: {resource.category}</span>
-              </TooltipContent>
-            </Tooltip>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {resource.links.length} link{resource.links.length === 1 ? "" : "s"}
+            </p>
             {canManage ? (
               <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                 <Tooltip>
@@ -324,7 +314,7 @@ export function ResourceCardItem({
           </div>
 
           {resource.tags.length > 0 ? (
-            <div className="mb-3 flex flex-wrap gap-1.5">
+            <div className="mb-2.5 flex flex-wrap gap-1.5">
               {resource.tags.map((tag) => (
                 <Tooltip key={`${resource.id}-${tag}`}>
                   <TooltipTrigger asChild>
@@ -343,7 +333,7 @@ export function ResourceCardItem({
             </div>
           ) : null}
 
-          <ul className="flex flex-col gap-2.5" role="list">
+          <ul className="flex flex-col gap-2" role="list">
             {resource.links.map((link) => (
               <li key={link.id}>
                 <ResourceLinkCompactItem
