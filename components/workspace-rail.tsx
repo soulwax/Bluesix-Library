@@ -140,6 +140,7 @@ export function WorkspaceRail({
                   type="button"
                   variant="ghost"
                   size="icon"
+                  disableTooltip
                   className={cn(
                     "h-9 w-9 rounded-full border border-dashed border-border text-muted-foreground transition-all hover:rounded-xl hover:text-foreground",
                     isVertical ? "mt-1" : undefined,
@@ -166,6 +167,7 @@ export function WorkspaceRail({
                 type="button"
                 variant="ghost"
                 size="icon"
+                disableTooltip
                 className="h-9 w-9 rounded-full border border-border text-muted-foreground transition-all hover:rounded-xl hover:text-foreground"
                 onClick={onOpenSettings}
                 aria-label="Open general settings"

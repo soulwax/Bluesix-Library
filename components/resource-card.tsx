@@ -307,6 +307,7 @@ export function ResourceCardItem({
                     <Button
                       variant="ghost"
                       size="icon"
+                      disableTooltip
                       className="h-7 w-7 text-muted-foreground hover:text-foreground"
                       onClick={() => onEdit(resource)}
                       aria-label={`Edit ${resource.category} resource card`}
@@ -322,6 +323,7 @@ export function ResourceCardItem({
                     <Button
                       variant="ghost"
                       size="icon"
+                      disableTooltip
                       className="h-7 w-7 text-muted-foreground hover:text-destructive"
                       onClick={() => onDelete(resource.id)}
                       aria-label={`Delete ${resource.category} resource card`}
