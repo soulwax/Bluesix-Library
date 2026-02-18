@@ -12,6 +12,7 @@ import {
 } from "@/lib/authorization";
 import {
   buildLinkDraftFromUrl,
+  extractHttpUrlsFromText,
   normalizeDraftCategory,
   normalizeDraftLabel,
   normalizeDraftNote,
@@ -19,6 +20,10 @@ import {
   normalizeHttpUrl,
   type PastedLinkDraft,
 } from "@/lib/link-paste";
+import {
+  detectLinkDuplicates,
+  type LinkDuplicateMatch,
+} from "@/lib/link-duplicate-detection";
 import { cn } from "@/lib/utils";
 import type {
   ResourceCard,
@@ -153,6 +158,39 @@ interface LinkSuggestionResponse extends ApiErrorResponse {
   category?: string;
   tags?: string[];
   model?: string;
+}
+
+interface AiInboxItem {
+  id: string;
+  selected: boolean;
+  url: string;
+  label: string;
+  note: string;
+  category: string | null;
+  tags: string[];
+  model: string | null;
+  usedAi: boolean;
+  error: string | null;
+  exactMatches: LinkDuplicateMatch[];
+  nearMatches: LinkDuplicateMatch[];
+}
+
+interface AiInboxBatchResponse extends ApiErrorResponse {
+  items?: Array<{
+    url: string;
+    label: string;
+    note: string;
+    category: string | null;
+    tags: string[];
+    model: string | null;
+    usedAi: boolean;
+    error: string | null;
+    exactMatches: LinkDuplicateMatch[];
+    nearMatches: LinkDuplicateMatch[];
+  }>;
+  analyzed?: number;
+  aiRequested?: boolean;
+  aiApplied?: number;
 }
 
 interface AskLibraryCitation {
@@ -292,6 +330,7 @@ const FALLBACK_VIEWPORT_WIDTH = 1440;
 const SECTION_PREFERENCES_STORAGE_KEY = "section-preferences";
 const GENERAL_SETTINGS_STORAGE_KEY = "general-settings-preferences";
 const ASK_LIBRARY_HISTORY_LIMIT = 8;
+const AI_INBOX_MAX_URLS = 25;
 const DEFAULT_SECTION_PREFERENCES: SectionPreferences = {
   compactTitles: false,
   showContextLine: true,
@@ -474,6 +513,33 @@ function createAskLibraryTurnId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function normalizeAiInboxCategory(
+  rawCategory: string | null | undefined,
+  fallbackCategory: string | null
+): string {
+  const trimmed = rawCategory?.trim() ?? "";
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+
+  if (fallbackCategory && fallbackCategory !== "All") {
+    return fallbackCategory;
+  }
+
+  return "General";
+}
+
+function summarizeDuplicateMatches(matches: LinkDuplicateMatch[]): string {
+  if (matches.length === 0) {
+    return "none";
+  }
+
+  return matches
+    .slice(0, 3)
+    .map((match) => `${match.category}: ${match.linkLabel}`)
+    .join(" | ");
+}
+
 function snapSidebarWidth(width: number): number {
   return Math.round(width / SIDEBAR_SNAP_GRID) * SIDEBAR_SNAP_GRID;
 }
@@ -586,6 +652,12 @@ export default function Page() {
   const [activeCategory, setActiveCategory] = useState<string | "All">("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [aiInboxOpen, setAiInboxOpen] = useState(false);
+  const [aiInboxRawInput, setAiInboxRawInput] = useState("");
+  const [aiInboxItems, setAiInboxItems] = useState<AiInboxItem[]>([]);
+  const [aiInboxUseAi, setAiInboxUseAi] = useState(true);
+  const [isAiInboxAnalyzing, setIsAiInboxAnalyzing] = useState(false);
+  const [isAiInboxImporting, setIsAiInboxImporting] = useState(false);
   const [askLibraryOpen, setAskLibraryOpen] = useState(false);
   const [askLibraryQuery, setAskLibraryQuery] = useState("");
   const [askLibraryAnswer, setAskLibraryAnswer] = useState<string | null>(null);
@@ -750,6 +822,12 @@ export default function Page() {
     if (isRefreshingLibrary) {
       return "Refreshing library...";
     }
+    if (isAiInboxAnalyzing) {
+      return "Analyzing AI inbox links...";
+    }
+    if (isAiInboxImporting) {
+      return "Importing AI inbox links...";
+    }
     if (isAskingLibrary) {
       return "Analyzing your library...";
     }
@@ -798,6 +876,8 @@ export default function Page() {
     deletingResourceId,
     isAskLibraryThreadLoading,
     isAskLibraryThreadsLoading,
+    isAiInboxAnalyzing,
+    isAiInboxImporting,
     isAiPastePreferenceSaving,
     isAskingLibrary,
     isAuthSubmitting,
@@ -976,6 +1056,25 @@ export default function Page() {
   const openCreateModalFromPastedUrl = useCallback(
     async (url: string, useAi: boolean, targetCategory?: string | null) => {
       const draft = await buildLinkDraftForPaste(url, useAi);
+      const duplicateInsight = detectLinkDuplicates({
+        links: [{ url: draft.url, label: draft.label }],
+        resources,
+        workspaceId: activeWorkspaceId,
+      });
+      if (duplicateInsight.exactMatches.length > 0) {
+        toast.warning("Possible duplicate link", {
+          description: `Already saved: ${summarizeDuplicateMatches(
+            duplicateInsight.exactMatches
+          )}`,
+        });
+      } else if (duplicateInsight.nearMatches.length > 0) {
+        toast.message("Similar links found", {
+          description: `Related entries: ${summarizeDuplicateMatches(
+            duplicateInsight.nearMatches
+          )}`,
+        });
+      }
+
       setEditingResource(null);
       setInitialLinkDraft(draft);
       const resolvedCategory =
@@ -986,7 +1085,7 @@ export default function Page() {
       setInitialTagsDraft(normalizeDraftTags(draft.tags ?? []));
       setModalOpen(true);
     },
-    [buildLinkDraftForPaste],
+    [activeWorkspaceId, buildLinkDraftForPaste, resources],
   );
 
   const handlePasteFromClipboard = useCallback(
@@ -1370,6 +1469,14 @@ export default function Page() {
       left.localeCompare(right, undefined, { sensitivity: "base" }),
     );
   }, [askScopeWorkspace, resources, resourcesInActiveWorkspace]);
+  const aiInboxSelectedCount = useMemo(
+    () => aiInboxItems.filter((item) => item.selected).length,
+    [aiInboxItems],
+  );
+  const aiInboxExactMatchCount = useMemo(
+    () => aiInboxItems.reduce((count, item) => count + item.exactMatches.length, 0),
+    [aiInboxItems],
+  );
   const isWorkspaceSelectionPending =
     isWorkspacesLoading && !activeWorkspaceId && workspaces.length === 0;
   const showResourceSkeleton =
@@ -1719,7 +1826,17 @@ export default function Page() {
 
     setAskLibraryThreads([]);
     setAskLibraryThreadId(null);
+    setAiInboxItems([]);
+    setAiInboxOpen(false);
   }, [sessionUserId]);
+
+  useEffect(() => {
+    if (canUseAiFeatures) {
+      return;
+    }
+
+    setAiInboxUseAi(false);
+  }, [canUseAiFeatures]);
 
   useEffect(() => {
     if (activeCategory !== "All" && !categories.includes(activeCategory)) {
@@ -1763,6 +1880,7 @@ export default function Page() {
     setAskLibraryFollowUpSuggestions([]);
     setAskLibraryUsedAi(false);
     setAskLibraryModel(null);
+    setAiInboxItems([]);
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -2544,6 +2662,39 @@ export default function Page() {
           ...input,
           workspaceId: targetWorkspaceId,
         };
+        const duplicateInsight = detectLinkDuplicates({
+          links: payloadInput.links.map((link) => ({
+            url: link.url,
+            label: link.label,
+          })),
+          resources,
+          workspaceId: targetWorkspaceId,
+          excludeResourceId: editingResource?.id ?? null,
+        });
+
+        if (
+          typeof window !== "undefined" &&
+          (duplicateInsight.exactMatches.length > 0 ||
+            duplicateInsight.nearMatches.length > 0)
+        ) {
+          const duplicateMessage = [
+            duplicateInsight.exactMatches.length > 0
+              ? `Exact: ${summarizeDuplicateMatches(duplicateInsight.exactMatches)}`
+              : "",
+            duplicateInsight.nearMatches.length > 0
+              ? `Similar: ${summarizeDuplicateMatches(duplicateInsight.nearMatches)}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+          const shouldContinue = window.confirm(
+            `Potential duplicate links were detected.\n${duplicateMessage}\n\nPress OK to save anyway, or Cancel to review.`,
+          );
+          if (!shouldContinue) {
+            return;
+          }
+        }
 
         const response = await fetch(
           isEditing ? `/api/resources/${editingResource.id}` : "/api/resources",
@@ -3074,6 +3225,224 @@ export default function Page() {
     }
   }, []);
 
+  const handleOpenAiInbox = useCallback(() => {
+    if (!canManageResources) {
+      toast.error("Insufficient permissions", {
+        description: "You do not have access to create resource cards.",
+      });
+      return;
+    }
+
+    if (!activeWorkspaceId) {
+      toast.error("Workspace unavailable", {
+        description: "Select a workspace before opening AI Inbox.",
+      });
+      return;
+    }
+
+    setAiInboxUseAi(canUseAiFeatures);
+    setAiInboxOpen(true);
+  }, [activeWorkspaceId, canManageResources, canUseAiFeatures]);
+
+  const handleAnalyzeAiInbox = useCallback(async () => {
+    if (!canManageResources) {
+      return;
+    }
+
+    if (!activeWorkspaceId) {
+      toast.error("Workspace unavailable", {
+        description: "Select a workspace before analyzing links.",
+      });
+      return;
+    }
+
+    const extractedUrls = extractHttpUrlsFromText(aiInboxRawInput);
+    if (extractedUrls.length === 0) {
+      toast.error("No valid URLs found", {
+        description: "Paste one or more http(s) links to analyze.",
+      });
+      return;
+    }
+
+    if (extractedUrls.length > AI_INBOX_MAX_URLS) {
+      toast.error("Too many URLs", {
+        description: `AI Inbox supports up to ${AI_INBOX_MAX_URLS} links at once.`,
+      });
+      return;
+    }
+
+    const categoryHints = categoryRecords
+      .filter((category) => category.workspaceId === activeWorkspaceId)
+      .map((category) => category.name)
+      .filter((category) => category.trim().length > 0);
+
+    setIsAiInboxAnalyzing(true);
+    try {
+      const response = await fetch("/api/links/suggest-batch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          urls: extractedUrls,
+          categories: categoryHints,
+          workspaceId: activeWorkspaceId,
+          useAi: aiInboxUseAi && canUseAiFeatures,
+        }),
+      });
+      const payload = await readJson<AiInboxBatchResponse>(response);
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to analyze links.");
+      }
+
+      const nextItems: AiInboxItem[] = (payload?.items ?? []).map((item, index) => ({
+        id: `${Date.now().toString(36)}-${index}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}`,
+        selected: (item.exactMatches?.length ?? 0) === 0,
+        url: item.url,
+        label: item.label,
+        note: item.note,
+        category: item.category,
+        tags: item.tags ?? [],
+        model: item.model ?? null,
+        usedAi: item.usedAi === true,
+        error: item.error ?? null,
+        exactMatches: item.exactMatches ?? [],
+        nearMatches: item.nearMatches ?? [],
+      }));
+
+      setAiInboxItems(nextItems);
+      const exactCount = nextItems.filter((item) => item.exactMatches.length > 0).length;
+      toast.success("AI Inbox analyzed links", {
+        description:
+          exactCount > 0
+            ? `${nextItems.length} processed, ${exactCount} pre-unchecked due to exact duplicates.`
+            : `${nextItems.length} links ready for import.`,
+      });
+    } catch (error) {
+      toast.error("AI Inbox analysis failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not analyze pasted links.",
+      });
+    } finally {
+      setIsAiInboxAnalyzing(false);
+    }
+  }, [
+    activeWorkspaceId,
+    aiInboxRawInput,
+    aiInboxUseAi,
+    canManageResources,
+    canUseAiFeatures,
+    categoryRecords,
+  ]);
+
+  const updateAiInboxItem = useCallback(
+    (itemId: string, updater: (previous: AiInboxItem) => AiInboxItem) => {
+      setAiInboxItems((previous) =>
+        previous.map((item) => (item.id === itemId ? updater(item) : item)),
+      );
+    },
+    [],
+  );
+
+  const handleImportAiInbox = useCallback(async () => {
+    if (!canManageResources || !activeWorkspaceId) {
+      return;
+    }
+
+    const selectedItems = aiInboxItems.filter((item) => item.selected);
+    if (selectedItems.length === 0) {
+      toast.error("No links selected", {
+        description: "Select at least one analyzed link to import.",
+      });
+      return;
+    }
+
+    const exactDuplicateCount = selectedItems.reduce(
+      (count, item) => count + item.exactMatches.length,
+      0,
+    );
+    if (exactDuplicateCount > 0 && typeof window !== "undefined") {
+      const shouldContinue = window.confirm(
+        `${exactDuplicateCount} exact duplicate match(es) are selected. Import anyway?`,
+      );
+      if (!shouldContinue) {
+        return;
+      }
+    }
+
+    setIsAiInboxImporting(true);
+    try {
+      const createdResources: ResourceCard[] = [];
+      let failed = 0;
+
+      for (const item of selectedItems) {
+        const payloadInput: ResourceInput = {
+          workspaceId: activeWorkspaceId,
+          category: normalizeAiInboxCategory(item.category, activeCategory),
+          tags: normalizeDraftTags(item.tags ?? []),
+          links: [
+            {
+              url: item.url,
+              label: normalizeDraftLabel(item.label),
+              note: normalizeDraftNote(item.note) || undefined,
+            },
+          ],
+        };
+
+        try {
+          const response = await fetch("/api/resources", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payloadInput),
+          });
+          const payload = await readJson<ResourceResponse>(response);
+          if (!response.ok || !payload?.resource) {
+            failed += 1;
+            continue;
+          }
+
+          createdResources.push(payload.resource);
+        } catch {
+          failed += 1;
+        }
+      }
+
+      if (createdResources.length > 0) {
+        setResources((previous) => [...createdResources, ...previous]);
+        void fetchCategories();
+      }
+
+      const importedIds = new Set(createdResources.flatMap((resource) => resource.links.map((link) => link.url)));
+      setAiInboxItems((previous) =>
+        previous.filter((item) => !importedIds.has(item.url) || !item.selected),
+      );
+
+      if (createdResources.length > 0) {
+        toast.success("AI Inbox import complete", {
+          description: `${createdResources.length} link(s) imported${failed > 0 ? `, ${failed} failed.` : "."}`,
+        });
+      } else {
+        toast.error("AI Inbox import failed", {
+          description: "No links were imported.",
+        });
+      }
+    } finally {
+      setIsAiInboxImporting(false);
+    }
+  }, [
+    activeCategory,
+    activeWorkspaceId,
+    aiInboxItems,
+    canManageResources,
+    fetchCategories,
+  ]);
+
   const syncAskLibraryFromConversation = useCallback(
     (conversation: AskLibraryConversationTurn[]) => {
       const latestAssistantTurn = [...conversation]
@@ -3552,6 +3921,22 @@ export default function Page() {
               </Tabs>
             </PopoverContent>
           </Popover>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleOpenAiInbox}
+            disabled={
+              isResourcesLoading ||
+              isAiInboxAnalyzing ||
+              isAiInboxImporting ||
+              !canManageResources ||
+              !activeWorkspaceId
+            }
+          >
+            <WandSparkles className="h-4 w-4" />
+            <span className="ml-2 hidden sm:inline">AI Inbox</span>
+          </Button>
 
           <Button
             variant="outline"
@@ -4043,6 +4428,19 @@ export default function Page() {
               </ContextMenuItem>
             ) : null}
             <ContextMenuItem
+              disabled={
+                !canManageResources ||
+                isAiInboxAnalyzing ||
+                isAiInboxImporting ||
+                isResourcesLoading ||
+                !activeWorkspaceId
+              }
+              onSelect={handleOpenAiInbox}
+            >
+              <WandSparkles className="mr-2 h-4 w-4" />
+              AI inbox
+            </ContextMenuItem>
+            <ContextMenuItem
               disabled={isAskingLibrary || isResourcesLoading}
               onSelect={handleAskLibraryOpen}
             >
@@ -4117,6 +4515,236 @@ export default function Page() {
             >
               {isAiPastePreferenceSaving ? "Saving..." : "Yes"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={aiInboxOpen}
+        onOpenChange={(open) => {
+          if (isAiInboxAnalyzing || isAiInboxImporting) {
+            return;
+          }
+          setAiInboxOpen(open);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>AI Inbox</DialogTitle>
+            <DialogDescription>
+              Paste multiple URLs, review AI suggestions, and import selected
+              links into your active workspace.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="ai-inbox-urls">URLs</Label>
+              <Textarea
+                id="ai-inbox-urls"
+                value={aiInboxRawInput}
+                onChange={(event) => setAiInboxRawInput(event.target.value)}
+                placeholder="Paste one or more URLs (one per line or mixed text)..."
+                rows={6}
+                disabled={isAiInboxAnalyzing || isAiInboxImporting}
+              />
+              <p className="text-xs text-muted-foreground">
+                Up to {AI_INBOX_MAX_URLS} URLs per run.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/70 bg-card/50 p-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-foreground">
+                    Use AI suggestions
+                  </span>
+                  <Switch
+                    checked={aiInboxUseAi && canUseAiFeatures}
+                    onCheckedChange={(checked) => setAiInboxUseAi(checked)}
+                    disabled={
+                      !canUseAiFeatures || isAiInboxAnalyzing || isAiInboxImporting
+                    }
+                    aria-label="Use AI for AI Inbox suggestions"
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {canUseAiFeatures
+                    ? "Enabled: labels, notes, categories, and tags will be AI-enriched."
+                    : "AI features are disabled; inbox uses deterministic fallback metadata."}
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleAnalyzeAiInbox()}
+                  disabled={
+                    isAiInboxAnalyzing ||
+                    isAiInboxImporting ||
+                    aiInboxRawInput.trim().length === 0
+                  }
+                >
+                  {isAiInboxAnalyzing ? "Analyzing..." : "Analyze"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void handleImportAiInbox()}
+                  disabled={
+                    isAiInboxAnalyzing ||
+                    isAiInboxImporting ||
+                    aiInboxSelectedCount === 0
+                  }
+                >
+                  {isAiInboxImporting
+                    ? "Importing..."
+                    : `Import selected (${aiInboxSelectedCount})`}
+                </Button>
+              </div>
+            </div>
+
+            {aiInboxItems.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Analyzed links
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {aiInboxItems.length} total
+                    {aiInboxExactMatchCount > 0
+                      ? ` • ${aiInboxExactMatchCount} exact duplicate match(es)`
+                      : ""}
+                  </p>
+                </div>
+
+                <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+                  {aiInboxItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className={cn(
+                        "space-y-2 rounded-md border p-3",
+                        item.exactMatches.length > 0
+                          ? "border-amber-500/60 bg-amber-500/10"
+                          : "border-border/70 bg-card/50",
+                      )}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <label className="flex min-w-0 items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={item.selected}
+                            onChange={(event) =>
+                              updateAiInboxItem(item.id, (previous) => ({
+                                ...previous,
+                                selected: event.target.checked,
+                              }))
+                            }
+                            disabled={isAiInboxImporting}
+                            className="mt-0.5 h-4 w-4 rounded border-border bg-background"
+                          />
+                          <span className="break-all text-xs text-foreground">
+                            {item.url}
+                          </span>
+                        </label>
+
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          {item.usedAi ? (
+                            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-emerald-300">
+                              AI{item.model ? ` (${item.model})` : ""}
+                            </span>
+                          ) : (
+                            <span className="rounded-full border border-border/70 bg-card px-2 py-0.5 text-muted-foreground">
+                              Fallback
+                            </span>
+                          )}
+                          {item.exactMatches.length > 0 ? (
+                            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-300">
+                              {item.exactMatches.length} exact
+                            </span>
+                          ) : null}
+                          {item.nearMatches.length > 0 ? (
+                            <span className="rounded-full border border-border/70 bg-card px-2 py-0.5 text-muted-foreground">
+                              {item.nearMatches.length} similar
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <Input
+                          value={item.label}
+                          onChange={(event) =>
+                            updateAiInboxItem(item.id, (previous) => ({
+                              ...previous,
+                              label: event.target.value,
+                            }))
+                          }
+                          placeholder="Label"
+                          disabled={isAiInboxImporting}
+                        />
+                        <Input
+                          value={item.category ?? ""}
+                          onChange={(event) =>
+                            updateAiInboxItem(item.id, (previous) => ({
+                              ...previous,
+                              category: event.target.value,
+                            }))
+                          }
+                          placeholder="Category"
+                          disabled={isAiInboxImporting}
+                        />
+                        <Input
+                          value={item.note}
+                          onChange={(event) =>
+                            updateAiInboxItem(item.id, (previous) => ({
+                              ...previous,
+                              note: event.target.value,
+                            }))
+                          }
+                          placeholder="Note"
+                          disabled={isAiInboxImporting}
+                          className="sm:col-span-2"
+                        />
+                        <Input
+                          value={item.tags.join(", ")}
+                          onChange={(event) =>
+                            updateAiInboxItem(item.id, (previous) => ({
+                              ...previous,
+                              tags: normalizeDraftTags(
+                                event.target.value
+                                  .split(",")
+                                  .map((tag) => tag.trim())
+                                  .filter(Boolean),
+                              ),
+                            }))
+                          }
+                          placeholder="Tags (comma separated)"
+                          disabled={isAiInboxImporting}
+                          className="sm:col-span-2"
+                        />
+                      </div>
+
+                      {item.error ? (
+                        <p className="text-[11px] text-amber-300">{item.error}</p>
+                      ) : null}
+
+                      {item.exactMatches.length > 0 ? (
+                        <p className="text-[11px] text-amber-300">
+                          Exact duplicate(s):{" "}
+                          {summarizeDuplicateMatches(item.exactMatches)}
+                        </p>
+                      ) : null}
+                      {item.nearMatches.length > 0 ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Similar links: {summarizeDuplicateMatches(item.nearMatches)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

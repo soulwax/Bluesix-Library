@@ -59,6 +59,30 @@ export function normalizeHttpUrl(value: string): string | null {
   }
 }
 
+export function extractHttpUrlsFromText(value: string): string[] {
+  const raw = value.trim()
+  if (!raw) {
+    return []
+  }
+
+  const matches = raw.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? []
+  const deduped = new Map<string, string>()
+
+  for (const match of matches) {
+    const normalized = normalizeHttpUrl(match)
+    if (!normalized) {
+      continue
+    }
+
+    const key = normalized.toLowerCase()
+    if (!deduped.has(key)) {
+      deduped.set(key, normalized)
+    }
+  }
+
+  return [...deduped.values()]
+}
+
 export function buildLinkDraftFromUrl(url: string): PastedLinkDraft {
   const normalizedUrl = normalizeHttpUrl(url) ?? url.trim()
 
