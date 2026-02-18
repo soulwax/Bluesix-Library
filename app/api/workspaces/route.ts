@@ -40,6 +40,7 @@ export async function GET() {
     const session = await auth()
     const { mode, workspaces } = await listResourceWorkspacesService({
       userId: session?.user?.id ?? null,
+      includeAllWorkspaces: session?.user?.isFirstAdmin === true,
     })
 
     return NextResponse.json({ mode, workspaces })

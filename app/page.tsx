@@ -586,14 +586,6 @@ export default function Page() {
     ownedWorkspaceCount,
   ]);
 
-  const totalLinks = useMemo(
-    () =>
-      resourcesInActiveWorkspace.reduce(
-        (acc, resource) => acc + resource.links.length,
-        0,
-      ),
-    [resourcesInActiveWorkspace],
-  );
   const categoryRecordByLowerName = useMemo(() => {
     const next = new Map<string, ResourceCategory>();
     for (const category of categoryRecords) {
@@ -1808,16 +1800,11 @@ export default function Page() {
                 </span>
               </span>
             ) : null}
-            <div className="inline-flex flex-col rounded-xl border border-border bg-secondary/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-              <span>{resourcesInActiveWorkspace.length} cards</span>
-              <span>{totalLinks} links</span>
-              <span className="max-w-40 truncate">{workspaceDisplayName}</span>
-              {dataMode === "mock" ? (
-                <span className="text-[10px] uppercase tracking-wide text-amber-600">
-                  mock mode
-                </span>
-              ) : null}
-            </div>
+            {dataMode === "mock" ? (
+              <span className="rounded-md border border-border bg-secondary/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                mock mode
+              </span>
+            ) : null}
           </div>
         </div>
 

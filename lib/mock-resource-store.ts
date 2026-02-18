@@ -152,7 +152,8 @@ function ensureMainWorkspace(): ResourceWorkspace {
 
 function requireVisibleWorkspace(
   workspaceId: string,
-  actorUserId?: string | null
+  actorUserId?: string | null,
+  options?: { includeAllWorkspaces?: boolean }
 ): ResourceWorkspace {
   const normalizedActorUserId = normalizeActorUserId(actorUserId)
   const workspace = (mockWorkspaces ?? []).find((item) => item.id === workspaceId)
@@ -161,7 +162,10 @@ function requireVisibleWorkspace(
     throw new ResourceWorkspaceNotFoundError(workspaceId)
   }
 
-  if (!isWorkspaceVisibleToUser(workspace.ownerUserId, normalizedActorUserId)) {
+  if (
+    !options?.includeAllWorkspaces &&
+    !isWorkspaceVisibleToUser(workspace.ownerUserId, normalizedActorUserId)
+  ) {
     throw new ResourceWorkspaceNotFoundError(workspaceId)
   }
 
@@ -269,7 +273,14 @@ function ensureMockStore() {
   }
 }
 
-function listVisibleWorkspaceIds(userId?: string | null): string[] {
+function listVisibleWorkspaceIds(
+  userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean }
+): string[] {
+  if (options?.includeAllWorkspaces) {
+    return (mockWorkspaces ?? []).map((workspace) => workspace.id)
+  }
+
   const normalizedUserId = normalizeActorUserId(userId)
 
   return (mockWorkspaces ?? [])
@@ -291,10 +302,11 @@ function findFirstOwnedWorkspace(userId: string): ResourceWorkspace | null {
 
 function resolveWorkspaceForInput(
   workspaceId: string | undefined,
-  actorUserId?: string | null
+  actorUserId?: string | null,
+  options?: { includeAllWorkspaces?: boolean }
 ): ResourceWorkspace {
   if (workspaceId?.trim()) {
-    return requireVisibleWorkspace(workspaceId, actorUserId)
+    return requireVisibleWorkspace(workspaceId, actorUserId, options)
   }
 
   const normalizedActorUserId = normalizeActorUserId(actorUserId)
@@ -324,10 +336,15 @@ export async function hasAnyMockResources(): Promise<boolean> {
 
 export async function listMockResourceWorkspaces(options?: {
   userId?: string | null
+  includeAllWorkspaces?: boolean
 }): Promise<ResourceWorkspace[]> {
   ensureMockStore()
 
-  const visibleWorkspaceIdSet = new Set(listVisibleWorkspaceIds(options?.userId))
+  const visibleWorkspaceIdSet = new Set(
+    listVisibleWorkspaceIds(options?.userId, {
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    })
+  )
 
   return [...(mockWorkspaces ?? [])]
     .filter((workspace) => visibleWorkspaceIdSet.has(workspace.id))
@@ -393,9 +410,14 @@ export async function createMockResourceWorkspace(
 
 export async function listMockResources(options?: {
   userId?: string | null
+  includeAllWorkspaces?: boolean
 }): Promise<ResourceCard[]> {
   ensureMockStore()
-  const visibleWorkspaceIdSet = new Set(listVisibleWorkspaceIds(options?.userId))
+  const visibleWorkspaceIdSet = new Set(
+    listVisibleWorkspaceIds(options?.userId, {
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    })
+  )
 
   return (mockStore ?? [])
     .filter((resource) => !resource.deletedAt)
@@ -411,10 +433,13 @@ export async function listMockResourcesIncludingDeleted(): Promise<ResourceCard[
 export async function listMockResourceCategories(options?: {
   userId?: string | null
   workspaceId?: string | null
+  includeAllWorkspaces?: boolean
 }): Promise<ResourceCategory[]> {
   ensureMockStore()
 
-  const visibleWorkspaceIds = listVisibleWorkspaceIds(options?.userId)
+  const visibleWorkspaceIds = listVisibleWorkspaceIds(options?.userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  })
   if (visibleWorkspaceIds.length === 0) {
     return []
   }
@@ -438,13 +463,18 @@ export async function listMockResourceCategories(options?: {
 export async function createMockResourceCategory(
   name: string,
   symbol?: string | null,
-  options?: { workspaceId?: string; ownerUserId?: string | null }
+  options?: {
+    workspaceId?: string
+    ownerUserId?: string | null
+    includeAllWorkspaces?: boolean
+  }
 ): Promise<ResourceCategory> {
   ensureMockStore()
 
   const workspace = resolveWorkspaceForInput(
     options?.workspaceId,
-    options?.ownerUserId
+    options?.ownerUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces }
   )
 
   const normalizedName = normalizeCategoryName(name)
@@ -471,7 +501,7 @@ export async function createMockResourceCategory(
 export async function updateMockResourceCategorySymbol(
   categoryId: string,
   symbol: string | null,
-  options?: { actorUserId?: string | null }
+  options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<ResourceCategory> {
   ensureMockStore()
 
@@ -483,7 +513,11 @@ export async function updateMockResourceCategorySymbol(
   }
 
   const category = (mockCategories ?? [])[index]
-  const workspace = requireVisibleWorkspace(category.workspaceId, options?.actorUserId)
+  const workspace = requireVisibleWorkspace(
+    category.workspaceId,
+    options?.actorUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces }
+  )
   if (!workspace) {
     throw new ResourceCategoryNotFoundError(categoryId)
   }
@@ -501,7 +535,7 @@ export async function updateMockResourceCategorySymbol(
 
 export async function deleteMockResourceCategory(
   categoryId: string,
-  options?: { actorUserId?: string | null }
+  options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<{
   deletedCategory: ResourceCategory
   reassignedCategory: ResourceCategory
@@ -516,7 +550,11 @@ export async function deleteMockResourceCategory(
     throw new ResourceCategoryNotFoundError(categoryId)
   }
 
-  const workspace = requireVisibleWorkspace(existing.workspaceId, options?.actorUserId)
+  const workspace = requireVisibleWorkspace(
+    existing.workspaceId,
+    options?.actorUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces }
+  )
   if (!workspace) {
     throw new ResourceCategoryNotFoundError(categoryId)
   }
@@ -571,11 +609,15 @@ export async function listMockResourceAuditLogs(
 
 export async function createMockResource(
   input: ResourceInput,
-  options?: { ownerUserId?: string | null }
+  options?: { ownerUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<ResourceCard> {
   ensureMockStore()
 
-  const workspace = resolveWorkspaceForInput(input.workspaceId, options?.ownerUserId)
+  const workspace = resolveWorkspaceForInput(
+    input.workspaceId,
+    options?.ownerUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces }
+  )
   const category = ensureMockCategoryByName(
     input.category,
     workspace.id,
@@ -604,7 +646,7 @@ export async function createMockResource(
 export async function updateMockResource(
   id: string,
   input: ResourceInput,
-  options?: { ownerUserId?: string | null }
+  options?: { ownerUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<ResourceCard> {
   ensureMockStore()
 
@@ -619,7 +661,8 @@ export async function updateMockResource(
   const previous = (mockStore ?? [])[index]
   const workspace = resolveWorkspaceForInput(
     input.workspaceId ?? previous.workspaceId,
-    options?.ownerUserId
+    options?.ownerUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces }
   )
   const category = ensureMockCategoryByName(
     input.category,

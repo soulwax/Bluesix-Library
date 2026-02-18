@@ -99,6 +99,7 @@ export async function PUT(request: Request, context: RouteContext) {
     const input = parseResourceInput(payload)
     const { mode, resource } = await updateResourceService(resourceId, input, {
       ownerUserId: session.user.id,
+      includeAllWorkspaces: session.user.isFirstAdmin === true,
     })
 
     return NextResponse.json({ mode, resource })

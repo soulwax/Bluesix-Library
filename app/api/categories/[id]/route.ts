@@ -40,6 +40,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const categoryId = await parseCategoryId(context)
     const result = await deleteResourceCategoryService(categoryId, {
       actorUserId: session.user.id,
+      includeAllWorkspaces: session.user.isFirstAdmin === true,
     })
     return NextResponse.json(result)
   } catch (error) {
@@ -91,7 +92,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { mode, category } = await updateResourceCategorySymbolService(
       categoryId,
       input.symbol ?? null,
-      { actorUserId: session.user.id }
+      {
+        actorUserId: session.user.id,
+        includeAllWorkspaces: session.user.isFirstAdmin === true,
+      }
     )
 
     return NextResponse.json({ mode, category })

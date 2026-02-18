@@ -563,20 +563,24 @@ async function findFirstOwnedWorkspace(
 
 async function listVisibleWorkspaceIds(
   userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean },
 ): Promise<string[]> {
   const db = getDb();
   const normalizedUserId = normalizeActorUserId(userId);
 
   await ensureMainWorkspace();
 
-  const condition = normalizedUserId
-    ? eq(resourceWorkspaces.ownerUserId, normalizedUserId)
-    : isNull(resourceWorkspaces.ownerUserId);
+  const condition = options?.includeAllWorkspaces
+    ? undefined
+    : normalizedUserId
+      ? eq(resourceWorkspaces.ownerUserId, normalizedUserId)
+      : isNull(resourceWorkspaces.ownerUserId);
 
-  const rows = await db
+  const baseQuery = db
     .select({ id: resourceWorkspaces.id })
-    .from(resourceWorkspaces)
-    .where(condition);
+    .from(resourceWorkspaces);
+  const rows =
+    condition === undefined ? await baseQuery : await baseQuery.where(condition);
 
   return rows.map((row) => row.id);
 }
@@ -584,6 +588,7 @@ async function listVisibleWorkspaceIds(
 async function requireVisibleWorkspace(
   workspaceId: string,
   userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean },
 ): Promise<ResourceWorkspace> {
   const normalizedWorkspaceId = normalizeAndValidateUuid(
     workspaceId,
@@ -597,6 +602,7 @@ async function requireVisibleWorkspace(
   }
 
   if (
+    !options?.includeAllWorkspaces &&
     !isWorkspaceVisibleToUser(workspace.ownerUserId ?? null, normalizedUserId)
   ) {
     throw new ResourceWorkspaceNotFoundError(normalizedWorkspaceId);
@@ -608,9 +614,10 @@ async function requireVisibleWorkspace(
 async function resolveWorkspaceForInput(
   workspaceId: string | undefined,
   userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean },
 ): Promise<ResourceWorkspace> {
   if (workspaceId?.trim()) {
-    return requireVisibleWorkspace(workspaceId, userId);
+    return requireVisibleWorkspace(workspaceId, userId, options);
   }
 
   const normalizedUserId = normalizeActorUserId(userId);
@@ -928,6 +935,7 @@ async function findCategoryWithWorkspaceOwnerById(
 async function ensureCategoryVisibleToActor(
   categoryId: string,
   actorUserId?: string | null,
+  options?: { includeAllWorkspaces?: boolean },
 ): Promise<ResourceCategoryWithWorkspaceOwnerRow> {
   const normalizedActorUserId = normalizeActorUserId(actorUserId);
   const row = await findCategoryWithWorkspaceOwnerById(categoryId);
@@ -937,6 +945,7 @@ async function ensureCategoryVisibleToActor(
   }
 
   if (
+    !options?.includeAllWorkspaces &&
     !isWorkspaceVisibleToUser(
       row.workspaceOwnerUserId ?? null,
       normalizedActorUserId,
@@ -950,6 +959,7 @@ async function ensureCategoryVisibleToActor(
 
 export async function listResourceWorkspaces(options?: {
   userId?: string | null;
+  includeAllWorkspaces?: boolean;
 }): Promise<ResourceWorkspace[]> {
   await ensureSchema();
   const db = getDb();
@@ -957,11 +967,13 @@ export async function listResourceWorkspaces(options?: {
 
   await ensureMainWorkspace();
 
-  const whereCondition = normalizedUserId
-    ? eq(resourceWorkspaces.ownerUserId, normalizedUserId)
-    : isNull(resourceWorkspaces.ownerUserId);
+  const whereCondition = options?.includeAllWorkspaces
+    ? undefined
+    : normalizedUserId
+      ? eq(resourceWorkspaces.ownerUserId, normalizedUserId)
+      : isNull(resourceWorkspaces.ownerUserId);
 
-  const rows = await db
+  const baseQuery = db
     .select({
       id: resourceWorkspaces.id,
       name: resourceWorkspaces.name,
@@ -970,11 +982,14 @@ export async function listResourceWorkspaces(options?: {
       updatedAt: resourceWorkspaces.updatedAt,
     })
     .from(resourceWorkspaces)
-    .where(whereCondition)
     .orderBy(
       sql`${resourceWorkspaces.ownerUserId} IS NOT NULL`,
       sql`lower(${resourceWorkspaces.name}) asc`,
     );
+  const rows =
+    whereCondition === undefined
+      ? await baseQuery
+      : await baseQuery.where(whereCondition);
 
   return (rows as ResourceWorkspaceRow[]).map(normalizeWorkspaceRow);
 }
@@ -1050,6 +1065,7 @@ export async function createResourceWorkspace(
 export async function listResourceCategories(options?: {
   userId?: string | null;
   workspaceId?: string | null;
+  includeAllWorkspaces?: boolean;
 }): Promise<ResourceCategory[]> {
   await ensureSchema();
   const db = getDb();
@@ -1059,7 +1075,9 @@ export async function listResourceCategories(options?: {
   await ensureMainWorkspace();
   await syncCategoriesFromResources();
 
-  const visibleWorkspaceIds = await listVisibleWorkspaceIds(normalizedUserId);
+  const visibleWorkspaceIds = await listVisibleWorkspaceIds(normalizedUserId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  });
   if (visibleWorkspaceIds.length === 0) {
     return [];
   }
@@ -1097,7 +1115,11 @@ export async function listResourceCategories(options?: {
 export async function createResourceCategory(
   name: string,
   symbol?: string | null,
-  options?: { workspaceId?: string; ownerUserId?: string | null },
+  options?: {
+    workspaceId?: string;
+    ownerUserId?: string | null;
+    includeAllWorkspaces?: boolean;
+  },
 ): Promise<ResourceCategory> {
   await ensureSchema();
   const db = getDb();
@@ -1113,6 +1135,7 @@ export async function createResourceCategory(
   const workspace = await resolveWorkspaceForInput(
     options?.workspaceId,
     normalizedOwnerUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces },
   );
 
   try {
@@ -1152,13 +1175,15 @@ export async function createResourceCategory(
 export async function updateResourceCategorySymbol(
   categoryId: string,
   symbol: string | null,
-  options?: { actorUserId?: string | null },
+  options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean },
 ): Promise<ResourceCategory> {
   await ensureSchema();
   const db = getDb();
   const normalizedSymbol = normalizeCategorySymbol(symbol);
 
-  await ensureCategoryVisibleToActor(categoryId, options?.actorUserId);
+  await ensureCategoryVisibleToActor(categoryId, options?.actorUserId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  });
 
   const rows = await db
     .update(resourceCategories)
@@ -1187,7 +1212,7 @@ export async function updateResourceCategorySymbol(
 
 export async function deleteResourceCategory(
   categoryId: string,
-  options?: { actorUserId?: string | null },
+  options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean },
 ): Promise<{
   deletedCategory: ResourceCategory;
   reassignedCategory: ResourceCategory;
@@ -1199,6 +1224,7 @@ export async function deleteResourceCategory(
   const existing = await ensureCategoryVisibleToActor(
     categoryId,
     options?.actorUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces },
   );
   const deletedCategory = normalizeCategoryRow(existing);
   const normalizedDeletedName = deletedCategory.name.toLowerCase();
@@ -1254,10 +1280,13 @@ export async function hasAnyResources(): Promise<boolean> {
 
 export async function listResources(options?: {
   userId?: string | null;
+  includeAllWorkspaces?: boolean;
 }): Promise<ResourceCard[]> {
   await ensureSchema();
   const db = getDb();
-  const visibleWorkspaceIds = await listVisibleWorkspaceIds(options?.userId);
+  const visibleWorkspaceIds = await listVisibleWorkspaceIds(options?.userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  });
 
   if (visibleWorkspaceIds.length === 0) {
     return [];
@@ -1350,7 +1379,7 @@ export async function listResourceAuditLogs(
 
 export async function createResource(
   input: ResourceInput,
-  options?: { ownerUserId?: string | null },
+  options?: { ownerUserId?: string | null; includeAllWorkspaces?: boolean },
 ): Promise<ResourceCard> {
   await ensureSchema();
   const db = getDb();
@@ -1359,6 +1388,7 @@ export async function createResource(
   const workspace = await resolveWorkspaceForInput(
     input.workspaceId,
     normalizedOwnerUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces },
   );
   const categoryName = normalizeCategoryName(input.category);
 
@@ -1415,7 +1445,7 @@ export async function createResource(
 export async function updateResource(
   id: string,
   input: ResourceInput,
-  options?: { ownerUserId?: string | null },
+  options?: { ownerUserId?: string | null; includeAllWorkspaces?: boolean },
 ): Promise<ResourceCard> {
   await ensureSchema();
   const db = getDb();
@@ -1437,6 +1467,7 @@ export async function updateResource(
   const workspace = await resolveWorkspaceForInput(
     input.workspaceId ?? existing.workspaceId,
     normalizedOwnerUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces },
   );
 
   const categoryName = normalizeCategoryName(input.category);

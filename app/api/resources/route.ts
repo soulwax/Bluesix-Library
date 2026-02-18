@@ -60,6 +60,7 @@ export async function GET() {
     const session = await auth()
     const { mode, resources } = await listResourcesService({
       userId: session?.user?.id ?? null,
+      includeAllWorkspaces: session?.user?.isFirstAdmin === true,
     })
     return NextResponse.json({ mode, resources })
   } catch (error) {
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
     const input = parseResourceInput(payload)
     const { mode, resource } = await createResourceService(input, {
       ownerUserId: session.user.id,
+      includeAllWorkspaces: session.user.isFirstAdmin === true,
     })
 
     return NextResponse.json({ mode, resource }, { status: 201 })

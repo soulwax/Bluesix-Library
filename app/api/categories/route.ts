@@ -42,6 +42,7 @@ export async function GET() {
     const session = await auth()
     const { mode, categories } = await listResourceCategoriesService({
       userId: session?.user?.id ?? null,
+      includeAllWorkspaces: session?.user?.isFirstAdmin === true,
     })
     return NextResponse.json({ mode, categories })
   } catch {
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
       {
         workspaceId: input.workspaceId,
         ownerUserId: session.user.id,
+        includeAllWorkspaces: session.user.isFirstAdmin === true,
       }
     )
 

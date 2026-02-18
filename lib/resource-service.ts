@@ -111,6 +111,7 @@ async function ensureDatabaseBootstrapped() {
 
 export async function listResourceWorkspacesService(options?: {
   userId?: string | null
+  includeAllWorkspaces?: boolean
 }): Promise<{ mode: ResourceDataMode; workspaces: ResourceWorkspace[] }> {
   const mode = currentMode()
 
@@ -119,13 +120,19 @@ export async function listResourceWorkspacesService(options?: {
 
     return {
       mode,
-      workspaces: await listDbResourceWorkspaces({ userId: options?.userId }),
+      workspaces: await listDbResourceWorkspaces({
+        userId: options?.userId,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
+      }),
     }
   }
 
   return {
     mode,
-    workspaces: await listMockResourceWorkspaces({ userId: options?.userId }),
+    workspaces: await listMockResourceWorkspaces({
+      userId: options?.userId,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    }),
   }
 }
 
@@ -150,6 +157,7 @@ export async function createResourceWorkspaceService(
 
 export async function listResourcesService(options?: {
   userId?: string | null
+  includeAllWorkspaces?: boolean
 }): Promise<{
   mode: ResourceDataMode
   resources: ResourceCard[]
@@ -161,19 +169,26 @@ export async function listResourcesService(options?: {
 
     return {
       mode,
-      resources: await listDbResources({ userId: options?.userId }),
+      resources: await listDbResources({
+        userId: options?.userId,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
+      }),
     }
   }
 
   return {
     mode,
-    resources: await listMockResources({ userId: options?.userId }),
+    resources: await listMockResources({
+      userId: options?.userId,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    }),
   }
 }
 
 export async function listResourceCategoriesService(options?: {
   userId?: string | null
   workspaceId?: string | null
+  includeAllWorkspaces?: boolean
 }): Promise<{
   mode: ResourceDataMode
   categories: ResourceCategory[]
@@ -188,6 +203,7 @@ export async function listResourceCategoriesService(options?: {
       categories: await listDbResourceCategories({
         userId: options?.userId,
         workspaceId: options?.workspaceId,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
       }),
     }
   }
@@ -197,6 +213,7 @@ export async function listResourceCategoriesService(options?: {
     categories: await listMockResourceCategories({
       userId: options?.userId,
       workspaceId: options?.workspaceId,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
     }),
   }
 }
@@ -204,7 +221,11 @@ export async function listResourceCategoriesService(options?: {
 export async function createResourceCategoryService(
   name: string,
   symbol?: string | null,
-  options?: { workspaceId?: string; ownerUserId?: string | null }
+  options?: {
+    workspaceId?: string
+    ownerUserId?: string | null
+    includeAllWorkspaces?: boolean
+  }
 ): Promise<{ mode: ResourceDataMode; category: ResourceCategory }> {
   const mode = currentMode()
 
@@ -226,7 +247,7 @@ export async function createResourceCategoryService(
 export async function updateResourceCategorySymbolService(
   id: string,
   symbol: string | null,
-  options?: { actorUserId?: string | null }
+  options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<{ mode: ResourceDataMode; category: ResourceCategory }> {
   const mode = currentMode()
 
@@ -247,7 +268,7 @@ export async function updateResourceCategorySymbolService(
 
 export async function deleteResourceCategoryService(
   id: string,
-  options?: { actorUserId?: string | null }
+  options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<{
   mode: ResourceDataMode
   deletedCategory: ResourceCategory
@@ -269,7 +290,7 @@ export async function deleteResourceCategoryService(
 
 export async function createResourceService(
   input: ResourceInput,
-  options?: { ownerUserId?: string | null }
+  options?: { ownerUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<{ mode: ResourceDataMode; resource: ResourceCard }> {
   const mode = currentMode()
 
@@ -280,6 +301,7 @@ export async function createResourceService(
       mode,
       resource: await createDbResource(input, {
         ownerUserId: options?.ownerUserId ?? null,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
       }),
     }
   }
@@ -288,6 +310,7 @@ export async function createResourceService(
     mode,
     resource: await createMockResource(input, {
       ownerUserId: options?.ownerUserId ?? null,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
     }),
   }
 }
@@ -321,7 +344,7 @@ export async function listResourcesIncludingDeletedService(): Promise<{
 export async function updateResourceService(
   id: string,
   input: ResourceInput,
-  options?: { ownerUserId?: string | null }
+  options?: { ownerUserId?: string | null; includeAllWorkspaces?: boolean }
 ): Promise<{ mode: ResourceDataMode; resource: ResourceCard }> {
   const mode = currentMode()
 
@@ -332,6 +355,7 @@ export async function updateResourceService(
       mode,
       resource: await updateDbResource(id, input, {
         ownerUserId: options?.ownerUserId ?? null,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
       }),
     }
   }
@@ -340,6 +364,7 @@ export async function updateResourceService(
     mode,
     resource: await updateMockResource(id, input, {
       ownerUserId: options?.ownerUserId ?? null,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
     }),
   }
 }
