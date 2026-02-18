@@ -28,6 +28,7 @@ import {
   Database,
   ShieldCheck,
   Layers,
+  ClipboardPaste,
   Copy,
   FolderPlus,
   Pencil,
@@ -66,6 +67,8 @@ interface CategorySidebarProps {
   canEditCategory?: (category: string) => boolean;
   onEditCategory?: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
+  canPasteIntoCategory?: boolean;
+  onPasteIntoCategory?: (category: string) => void;
   onOpenWorkspaceSettings?: () => void;
   showHeading?: boolean;
   compactHeading?: boolean;
@@ -104,6 +107,8 @@ export function CategorySidebar({
   canEditCategory,
   onEditCategory,
   onDeleteCategory,
+  canPasteIntoCategory = false,
+  onPasteIntoCategory,
   onOpenWorkspaceSettings,
   showHeading = true,
   compactHeading = false,
@@ -251,6 +256,14 @@ export function CategorySidebar({
                     {cat !== "All" ? (
                       <ContextMenuItem onSelect={() => onCategoryChange("All")}>
                         View all categories
+                      </ContextMenuItem>
+                    ) : null}
+                    {cat !== "All" && canPasteIntoCategory ? (
+                      <ContextMenuItem
+                        onSelect={() => onPasteIntoCategory?.(cat)}
+                      >
+                        <ClipboardPaste className="mr-2 h-4 w-4" />
+                        Paste URL into category
                       </ContextMenuItem>
                     ) : null}
                     <ContextMenuItem

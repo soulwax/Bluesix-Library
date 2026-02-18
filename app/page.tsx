@@ -335,6 +335,9 @@ export default function Page() {
   const [modalOpen, setModalOpen] = useState(false);
   const [initialLinkDraft, setInitialLinkDraft] =
     useState<PastedLinkDraft | null>(null);
+  const [initialCategoryDraft, setInitialCategoryDraft] = useState<
+    string | null
+  >(null);
   const [clipboardUrlForPaste, setClipboardUrlForPaste] = useState<
     string | null
   >(null);
@@ -346,6 +349,9 @@ export default function Page() {
     useState(false);
   const [aiPastePromptOpen, setAiPastePromptOpen] = useState(false);
   const [pendingPasteUrl, setPendingPasteUrl] = useState<string | null>(null);
+  const [pendingPasteCategory, setPendingPasteCategory] = useState<
+    string | null
+  >(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopSidebarWidth, setDesktopSidebarWidth] = useState<number>(
     clampDesktopSidebarWidth(DESKTOP_SIDEBAR_DEFAULT_WIDTH),
@@ -605,74 +611,90 @@ export default function Page() {
   );
 
   const openCreateModalFromPastedUrl = useCallback(
-    async (url: string, useAi: boolean) => {
+    async (url: string, useAi: boolean, targetCategory?: string | null) => {
       const draft = await buildLinkDraftForPaste(url, useAi);
       setEditingResource(null);
       setInitialLinkDraft(draft);
+      setInitialCategoryDraft(targetCategory?.trim() || null);
       setModalOpen(true);
     },
     [buildLinkDraftForPaste],
   );
 
-  const handlePasteFromClipboard = useCallback(async () => {
-    if (!canManageResources) {
-      toast.error("Insufficient permissions", {
-        description: "You do not have access to create resource cards.",
-      });
-      return;
-    }
+  const handlePasteFromClipboard = useCallback(
+    async (
+      targetCategory?: string | null,
+      providedUrl?: string | null,
+    ): Promise<void> => {
+      if (!canManageResources) {
+        toast.error("Insufficient permissions", {
+          description: "You do not have access to create resource cards.",
+        });
+        return;
+      }
 
-    if (!activeWorkspaceId) {
-      toast.error("Workspace unavailable", {
-        description: "Select a workspace before pasting a link.",
-      });
-      return;
-    }
+      if (!activeWorkspaceId) {
+        toast.error("Workspace unavailable", {
+          description: "Select a workspace before pasting a link.",
+        });
+        return;
+      }
 
-    const pastedUrl = clipboardUrlForPaste ?? (await readClipboardUrl());
-    if (!pastedUrl) {
-      toast.error("No valid URL in clipboard", {
-        description: "Copy an http(s) URL first, then right-click again.",
-      });
-      return;
-    }
+      let pastedUrl =
+        providedUrl ?? clipboardUrlForPaste ?? (await readClipboardUrl());
+      if (!pastedUrl && typeof window !== "undefined") {
+        const manualInput = window.prompt(
+          "Paste an http(s) URL to continue:",
+          "",
+        );
+        pastedUrl = normalizeHttpUrl(manualInput ?? "");
+      }
+      if (!pastedUrl) {
+        toast.error("No valid URL in clipboard", {
+          description: "Copy an http(s) URL first, then try pasting again.",
+        });
+        return;
+      }
 
-    if (canUseAiFeatures) {
-      await openCreateModalFromPastedUrl(pastedUrl, true);
-      return;
-    }
+      if (canUseAiFeatures) {
+        await openCreateModalFromPastedUrl(pastedUrl, true, targetCategory);
+        return;
+      }
 
-    let decision = aiPastePromptDecision;
-    if (decision === null && !isAiPastePreferenceLoading) {
-      decision = await fetchAiPastePreference();
-    }
+      let decision = aiPastePromptDecision;
+      if (decision === null && !isAiPastePreferenceLoading) {
+        decision = await fetchAiPastePreference();
+      }
 
-    if (decision === null && isAuthenticated) {
-      setPendingPasteUrl(pastedUrl);
-      setAiPastePromptOpen(true);
-      return;
-    }
+      if (decision === null && isAuthenticated) {
+        setPendingPasteUrl(pastedUrl);
+        setPendingPasteCategory(targetCategory?.trim() || null);
+        setAiPastePromptOpen(true);
+        return;
+      }
 
-    if (decision === "accepted") {
-      updateGeneralSetting("aiFeaturesEnabled", true);
-      await openCreateModalFromPastedUrl(pastedUrl, true);
-      return;
-    }
+      if (decision === "accepted") {
+        updateGeneralSetting("aiFeaturesEnabled", true);
+        await openCreateModalFromPastedUrl(pastedUrl, true, targetCategory);
+        return;
+      }
 
-    await openCreateModalFromPastedUrl(pastedUrl, false);
-  }, [
-    activeWorkspaceId,
-    aiPastePromptDecision,
-    canManageResources,
-    canUseAiFeatures,
-    clipboardUrlForPaste,
-    fetchAiPastePreference,
-    isAiPastePreferenceLoading,
-    isAuthenticated,
-    openCreateModalFromPastedUrl,
-    readClipboardUrl,
-    updateGeneralSetting,
-  ]);
+      await openCreateModalFromPastedUrl(pastedUrl, false, targetCategory);
+    },
+    [
+      activeWorkspaceId,
+      aiPastePromptDecision,
+      canManageResources,
+      canUseAiFeatures,
+      clipboardUrlForPaste,
+      fetchAiPastePreference,
+      isAiPastePreferenceLoading,
+      isAuthenticated,
+      openCreateModalFromPastedUrl,
+      readClipboardUrl,
+      updateGeneralSetting,
+    ],
+  );
 
   const handleAiPastePromptChoice = useCallback(
     async (decision: AiPastePromptDecision) => {
@@ -681,21 +703,24 @@ export default function Page() {
       }
 
       const url = pendingPasteUrl;
+      const targetCategory = pendingPasteCategory;
       await saveAiPastePreference(decision);
       setAiPastePromptOpen(false);
       setPendingPasteUrl(null);
+      setPendingPasteCategory(null);
 
       if (decision === "accepted") {
         updateGeneralSetting("aiFeaturesEnabled", true);
-        await openCreateModalFromPastedUrl(url, true);
+        await openCreateModalFromPastedUrl(url, true, targetCategory);
         return;
       }
 
-      await openCreateModalFromPastedUrl(url, false);
+      await openCreateModalFromPastedUrl(url, false, targetCategory);
     },
     [
       isAiPastePreferenceSaving,
       openCreateModalFromPastedUrl,
+      pendingPasteCategory,
       pendingPasteUrl,
       saveAiPastePreference,
       updateGeneralSetting,
@@ -717,6 +742,61 @@ export default function Page() {
     },
     [canManageResources, readClipboardUrl],
   );
+
+  const handlePasteIntoCategory = useCallback(
+    (categoryName: string) => {
+      void handlePasteFromClipboard(categoryName);
+    },
+    [handlePasteFromClipboard],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleWindowPaste = (event: ClipboardEvent) => {
+      if (!canManageResources || !activeWorkspaceId) {
+        return;
+      }
+
+      const target = event.target;
+      if (target instanceof Element) {
+        const editableTarget = target.closest(
+          "input, textarea, [contenteditable=''], [contenteditable='true'], [contenteditable='plaintext-only']",
+        );
+        if (editableTarget) {
+          return;
+        }
+      }
+
+      const rawClipboard =
+        event.clipboardData?.getData("text/plain") ??
+        event.clipboardData?.getData("text") ??
+        "";
+      const pastedUrl = normalizeHttpUrl(rawClipboard);
+      if (!pastedUrl) {
+        return;
+      }
+
+      event.preventDefault();
+      setClipboardUrlForPaste(pastedUrl);
+      void handlePasteFromClipboard(
+        activeCategory === "All" ? null : activeCategory,
+        pastedUrl,
+      );
+    };
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste);
+    };
+  }, [
+    activeCategory,
+    activeWorkspaceId,
+    canManageResources,
+    handlePasteFromClipboard,
+  ]);
 
   const canManageResourceCard = useCallback(
     (resource: ResourceCard | null | undefined) => {
@@ -1184,6 +1264,7 @@ export default function Page() {
       setAiPastePromptDecision(null);
       setAiPastePromptOpen(false);
       setPendingPasteUrl(null);
+      setPendingPasteCategory(null);
       return;
     }
 
@@ -2260,6 +2341,7 @@ export default function Page() {
       }
 
       setInitialLinkDraft(null);
+      setInitialCategoryDraft(null);
       setEditingResource(resource);
       setModalOpen(true);
     },
@@ -2282,6 +2364,7 @@ export default function Page() {
     }
 
     setInitialLinkDraft(null);
+    setInitialCategoryDraft(null);
     setEditingResource(null);
     setModalOpen(true);
   }, [activeWorkspaceId, canManageResources]);
@@ -2405,6 +2488,7 @@ export default function Page() {
     setModalOpen(open);
     if (!open) {
       setInitialLinkDraft(null);
+      setInitialCategoryDraft(null);
       setEditingResource(null);
     }
   }, []);
@@ -2812,6 +2896,11 @@ export default function Page() {
             onDeleteCategory={(category) => {
               void handleDeleteCategoryByName(category);
             }}
+            canPasteIntoCategory={canManageResources}
+            onPasteIntoCategory={(category) => {
+              setActiveCategory(category);
+              handlePasteIntoCategory(category);
+            }}
             onOpenWorkspaceSettings={
               activeWorkspace?.ownerUserId ? handleOpenWorkspaceSettings : undefined
             }
@@ -2902,6 +2991,12 @@ export default function Page() {
               onEditCategory={handleOpenEditCategoryDialogByName}
               onDeleteCategory={(category) => {
                 void handleDeleteCategoryByName(category);
+              }}
+              canPasteIntoCategory={canManageResources}
+              onPasteIntoCategory={(category) => {
+                setActiveCategory(category);
+                setSidebarOpen(false);
+                handlePasteIntoCategory(category);
               }}
               showHeading={false}
             />
@@ -3126,17 +3221,17 @@ export default function Page() {
                   <Plus className="mr-2 h-4 w-4" />
                   Add resource card
                 </ContextMenuItem>
-                {clipboardUrlForPaste ? (
-                  <ContextMenuItem
-                    disabled={!activeWorkspaceId}
-                    onSelect={() => {
-                      void handlePasteFromClipboard();
-                    }}
-                  >
-                    <ClipboardPaste className="mr-2 h-4 w-4" />
-                    Paste URL from clipboard
-                  </ContextMenuItem>
-                ) : null}
+                <ContextMenuItem
+                  disabled={!activeWorkspaceId}
+                  onSelect={() => {
+                    void handlePasteFromClipboard(
+                      activeCategory === "All" ? null : activeCategory,
+                    );
+                  }}
+                >
+                  <ClipboardPaste className="mr-2 h-4 w-4" />
+                  Paste URL from clipboard
+                </ContextMenuItem>
               </>
             ) : null}
             {canManageCategories ? (
@@ -3183,6 +3278,7 @@ export default function Page() {
           setAiPastePromptOpen(open);
           if (!open) {
             setPendingPasteUrl(null);
+            setPendingPasteCategory(null);
           }
         }}
       >
@@ -3825,6 +3921,7 @@ export default function Page() {
         onSave={handleSave}
         editingResource={editingResource}
         initialLink={initialLinkDraft}
+        initialCategory={initialCategoryDraft}
         isSaving={isSaving}
         categorySuggestions={categories}
       />

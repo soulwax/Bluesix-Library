@@ -31,6 +31,7 @@ interface AddResourceModalProps {
   onSave: (resource: ResourceInput) => Promise<void>
   editingResource?: ResourceCard | null
   initialLink?: PastedLinkDraft | null
+  initialCategory?: string | null
   isSaving?: boolean
   categorySuggestions?: string[]
 }
@@ -41,11 +42,11 @@ export function AddResourceModal({
   onSave,
   editingResource,
   initialLink,
+  initialCategory,
   isSaving = false,
   categorySuggestions = [],
 }: AddResourceModalProps) {
-  const [category, setCategory] = useState("")
-  const [customCategory, setCustomCategory] = useState("")
+  const [categoryInput, setCategoryInput] = useState("")
   const [tags, setTags] = useState<string[]>([])
   const [tagDraft, setTagDraft] = useState("")
   const [links, setLinks] = useState<LinkInput[]>([
@@ -67,8 +68,7 @@ export function AddResourceModal({
   }, [categorySuggestions])
 
   const resetForm = useCallback(() => {
-    setCategory("")
-    setCustomCategory("")
+    setCategoryInput("")
     setTags([])
     setTagDraft("")
     setLinks([{ url: "", label: "", note: "" }])
@@ -77,6 +77,10 @@ export function AddResourceModal({
   const initFromEditing = useCallback(() => {
     if (!editingResource) {
       resetForm()
+      const preparedCategory = initialCategory?.trim() ?? ""
+      if (preparedCategory) {
+        setCategoryInput(preparedCategory)
+      }
       if (initialLink?.url.trim()) {
         setLinks([
           {
@@ -89,13 +93,7 @@ export function AddResourceModal({
       return
     }
 
-    if (categoryOptions.includes(editingResource.category)) {
-      setCategory(editingResource.category)
-      setCustomCategory("")
-    } else {
-      setCategory("__custom__")
-      setCustomCategory(editingResource.category)
-    }
+    setCategoryInput(editingResource.category)
 
     setLinks(
       editingResource.links.map((link) => ({
@@ -106,7 +104,7 @@ export function AddResourceModal({
     )
     setTags([...(editingResource.tags ?? [])])
     setTagDraft("")
-  }, [categoryOptions, editingResource, initialLink, resetForm])
+  }, [editingResource, initialCategory, initialLink, resetForm])
 
   const handleOpenChange = (nextOpen: boolean) => {
     onOpenChange(nextOpen)
@@ -165,8 +163,7 @@ export function AddResourceModal({
     )
   }
 
-  const resolvedCategory =
-    category === "__custom__" ? customCategory.trim() : category
+  const resolvedCategory = categoryInput.trim()
 
   const validLinks = useMemo(
     () => links.filter((link) => link.url.trim() && link.label.trim()),
@@ -209,30 +206,21 @@ export function AddResourceModal({
 
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="category-select">Category</Label>
-            <select
-              id="category-select"
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <option value="">Select a category...</option>
+            <Label htmlFor="category-input">Category</Label>
+            <Input
+              id="category-input"
+              list="resource-category-suggestions"
+              placeholder="Type or paste a category..."
+              value={categoryInput}
+              onChange={(event) => setCategoryInput(event.target.value)}
+              autoFocus={!editingResource}
+              disabled={isSaving}
+            />
+            <datalist id="resource-category-suggestions">
               {categoryOptions.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
+                <option key={cat} value={cat} />
               ))}
-              <option value="__custom__">+ Custom category</option>
-            </select>
-
-            {category === "__custom__" && (
-              <Input
-                placeholder="Enter custom category name..."
-                value={customCategory}
-                onChange={(event) => setCustomCategory(event.target.value)}
-                autoFocus
-              />
-            )}
+            </datalist>
           </div>
 
           <div className="flex flex-col gap-3">

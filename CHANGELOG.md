@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-02-18
+
+### Changed
+
+- Email verification template rewritten: proper `<!DOCTYPE html>` structure, hidden preheader, branded header, CTA button, fallback URL, and footer disclaimer
+- Email subject changed from generic `"Confirm your email address"` to `"Confirm your lib.bluesix account"` to reduce spam misclassification
+- Plain-text part updated with app name header and clearer copy
+- Added `X-Entity-Ref-ID` header per send to prevent Gmail threading repeated verification emails into a single collapsed conversation
+- Added Resend `tags` field (`category: email-verification`) for dashboard filtering and per-category tracking control
+
 ### Added
 
 - Display user role label alongside email in the header
@@ -33,6 +43,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `extractJsonCandidate`: removed incorrect `errorResponse` return that caused a TypeScript type error (`NextResponse` not assignable to `string`)
 - Import path for route type definitions in `next-env.d.ts`
 - `onlyBuiltDependencies` configuration added for `sharp` in `package.json`
+
+## [0.1.7] - 2026-02-18
+
+### Added
+
+- Category context-menu action `Paste URL into category` in the sidebar (desktop and mobile)
+- Global keyboard paste support (`Ctrl+V` / `Cmd+V`) for URL paste-to-modal flow when focus is not inside editable fields
+- Optional manual URL prompt fallback when browser clipboard-read permissions block direct clipboard access
+
+### Changed
+
+- Add Resource category field changed from select-only to editable input with suggestions, enabling direct paste/typing
+- Paste flow now accepts a target category and pre-fills category when opening from category-scoped paste actions
+- Library context-menu paste action is now always shown (when resource creation is allowed) and validates clipboard on selection
+
+### Fixed
+
+- Resolved missing/hidden right-click paste action in category workflows
+- Resolved no-op paste behavior in category entry scenarios by enabling editable category input
 
 ## [0.1.6] - 2026-02-18
 
