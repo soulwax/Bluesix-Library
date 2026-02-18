@@ -30,8 +30,10 @@ import {
   Copy,
   FolderPlus,
   Pencil,
+  Settings,
   Trash2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -63,6 +65,7 @@ interface CategorySidebarProps {
   canEditCategory?: (category: string) => boolean;
   onEditCategorySymbol?: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
+  onOpenWorkspaceSettings?: () => void;
   showHeading?: boolean;
   compactHeading?: boolean;
   headingLabel?: string;
@@ -99,6 +102,7 @@ export function CategorySidebar({
   canEditCategory,
   onEditCategorySymbol,
   onDeleteCategory,
+  onOpenWorkspaceSettings,
   showHeading = true,
   compactHeading = false,
   headingLabel = "Categories",
@@ -126,7 +130,8 @@ export function CategorySidebar({
   ];
 
   return (
-    <ScrollArea className="h-full">
+    <div className="flex h-full flex-col">
+    <ScrollArea className="flex-1">
       <div className="flex flex-col gap-1 p-4">
         {showHeading ? (
           <div
@@ -274,5 +279,26 @@ export function CategorySidebar({
         })}
       </div>
     </ScrollArea>
+
+    {onOpenWorkspaceSettings ? (
+      <div className="border-t border-border/70 p-3">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground"
+              onClick={onOpenWorkspaceSettings}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Collection settings
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Rename or delete this collection</TooltipContent>
+        </Tooltip>
+      </div>
+    ) : null}
+    </div>
   );
 }

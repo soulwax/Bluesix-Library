@@ -408,6 +408,67 @@ export async function createMockResourceWorkspace(
   return cloneWorkspace(created)
 }
 
+export async function renameMockResourceWorkspace(
+  id: string,
+  name: string,
+  ownerUserId: string,
+): Promise<ResourceWorkspace> {
+  ensureMockStore()
+
+  const normalizedName = normalizeWorkspaceName(name)
+  if (!normalizedName) {
+    throw new Error("Workspace name is required.")
+  }
+
+  const index = (mockWorkspaces ?? []).findIndex(
+    (w) => w.id === id && (w.ownerUserId ?? null) === ownerUserId,
+  )
+
+  if (index === -1) {
+    throw new ResourceWorkspaceNotFoundError(id)
+  }
+
+  const nameConflict = (mockWorkspaces ?? []).some(
+    (w, i) =>
+      i !== index &&
+      (w.ownerUserId ?? null) === ownerUserId &&
+      w.name.toLowerCase() === normalizedName.toLowerCase(),
+  )
+
+  if (nameConflict) {
+    throw new ResourceWorkspaceAlreadyExistsError(normalizedName)
+  }
+
+  const updated: ResourceWorkspace = {
+    ...(mockWorkspaces![index] as ResourceWorkspace),
+    name: normalizedName,
+    updatedAt: new Date().toISOString(),
+  }
+
+  mockWorkspaces = (mockWorkspaces ?? []).map((w, i) => (i === index ? updated : w))
+
+  return cloneWorkspace(updated)
+}
+
+export async function deleteMockResourceWorkspace(
+  id: string,
+  ownerUserId: string,
+): Promise<void> {
+  ensureMockStore()
+
+  const exists = (mockWorkspaces ?? []).some(
+    (w) => w.id === id && (w.ownerUserId ?? null) === ownerUserId,
+  )
+
+  if (!exists) {
+    throw new ResourceWorkspaceNotFoundError(id)
+  }
+
+  mockWorkspaces = (mockWorkspaces ?? []).filter((w) => w.id !== id)
+  mockStore = (mockStore ?? []).filter((r) => r.workspaceId !== id)
+  mockCategories = (mockCategories ?? []).filter((c) => c.workspaceId !== id)
+}
+
 export async function listMockResources(options?: {
   userId?: string | null
   includeAllWorkspaces?: boolean

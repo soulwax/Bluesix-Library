@@ -9,12 +9,14 @@ import {
   createMockResource,
   deleteMockResourceCategory,
   deleteMockResource,
+  deleteMockResourceWorkspace,
   hasAnyMockResources,
   listMockResourceCategories,
   listMockResourceAuditLogs,
   listMockResourcesIncludingDeleted,
   listMockResourceWorkspaces,
   listMockResources,
+  renameMockResourceWorkspace,
   updateMockResourceCategorySymbol,
   restoreMockResource,
   updateMockResource,
@@ -26,12 +28,14 @@ import {
   backfillResourceOwnershipToFirstAdmin as backfillDbResourceOwnershipToFirstAdmin,
   deleteResourceCategory as deleteDbResourceCategory,
   deleteResource as deleteDbResource,
+  deleteResourceWorkspace as deleteDbResourceWorkspace,
   hasAnyResources as hasAnyDbResources,
   listResourceCategories as listDbResourceCategories,
   listResourceAuditLogs as listDbResourceAuditLogs,
   listResourcesIncludingDeleted as listDbResourcesIncludingDeleted,
   listResourceWorkspaces as listDbResourceWorkspaces,
   listResources as listDbResources,
+  renameResourceWorkspace as renameDbResourceWorkspace,
   updateResourceCategorySymbol as updateDbResourceCategorySymbol,
   restoreResource as restoreDbResource,
   updateResource as updateDbResource,
@@ -425,4 +429,39 @@ export async function listResourceAuditLogsService(
     mode,
     logs: await listMockResourceAuditLogs(limit),
   }
+}
+
+export async function renameResourceWorkspaceService(
+  id: string,
+  name: string,
+  ownerUserId: string,
+): Promise<{ mode: ResourceDataMode; workspace: ResourceWorkspace }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    return {
+      mode,
+      workspace: await renameDbResourceWorkspace(id, name, ownerUserId),
+    }
+  }
+
+  return {
+    mode,
+    workspace: await renameMockResourceWorkspace(id, name, ownerUserId),
+  }
+}
+
+export async function deleteResourceWorkspaceService(
+  id: string,
+  ownerUserId: string,
+): Promise<{ mode: ResourceDataMode }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    await deleteDbResourceWorkspace(id, ownerUserId)
+    return { mode }
+  }
+
+  await deleteMockResourceWorkspace(id, ownerUserId)
+  return { mode }
 }

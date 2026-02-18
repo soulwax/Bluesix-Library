@@ -153,6 +153,7 @@ interface SectionPreferences {
 }
 
 interface GeneralSettingsPreferences {
+  openLinksInSameTab: boolean;
   showAccountEmail: boolean;
   showAccountRole: boolean;
   showMockModeBadge: boolean;
@@ -183,6 +184,7 @@ const DEFAULT_SECTION_PREFERENCES: SectionPreferences = {
   adminQuickActions: true,
 };
 const DEFAULT_GENERAL_SETTINGS: GeneralSettingsPreferences = {
+  openLinksInSameTab: false,
   showAccountEmail: true,
   showAccountRole: true,
   showMockModeBadge: true,
@@ -261,6 +263,10 @@ function parseGeneralSettingsPreferences(
   try {
     const parsed = JSON.parse(rawValue) as Partial<GeneralSettingsPreferences>;
     return {
+      openLinksInSameTab:
+        typeof parsed.openLinksInSameTab === "boolean"
+          ? parsed.openLinksInSameTab
+          : DEFAULT_GENERAL_SETTINGS.openLinksInSameTab,
       showAccountEmail:
         typeof parsed.showAccountEmail === "boolean"
           ? parsed.showAccountEmail
@@ -329,6 +335,11 @@ export default function Page() {
   const [promoteIdentifier, setPromoteIdentifier] = useState("");
   const [isPromotingAdmin, setIsPromotingAdmin] = useState(false);
   const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false);
+  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
+  const [workspaceRenameInput, setWorkspaceRenameInput] = useState("");
+  const [isWorkspaceRenaming, setIsWorkspaceRenaming] = useState(false);
+  const [isWorkspaceDeleting, setIsWorkspaceDeleting] = useState(false);
+  const [confirmDeleteWorkspace, setConfirmDeleteWorkspace] = useState(false);
   const [sectionPreferences, setSectionPreferences] =
     useState<SectionPreferences>(DEFAULT_SECTION_PREFERENCES);
   const [generalSettings, setGeneralSettings] =
@@ -1834,6 +1845,81 @@ export default function Page() {
     setCreateWorkspaceDialogOpen(true);
   }, [canCreateWorkspaces, isAuthenticated]);
 
+  const handleOpenWorkspaceSettings = useCallback(() => {
+    if (!activeWorkspace?.ownerUserId) {
+      return;
+    }
+
+    setWorkspaceRenameInput(activeWorkspace.name);
+    setConfirmDeleteWorkspace(false);
+    setWorkspaceSettingsOpen(true);
+  }, [activeWorkspace]);
+
+  const handleRenameWorkspace = useCallback(async () => {
+    if (!activeWorkspace || !session?.user?.id) {
+      return;
+    }
+
+    const trimmed = workspaceRenameInput.trim();
+    if (!trimmed || trimmed === activeWorkspace.name) {
+      return;
+    }
+
+    setIsWorkspaceRenaming(true);
+    try {
+      const response = await fetch(`/api/workspaces/${activeWorkspace.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+
+      const data = await readJson<{ workspace: { id: string; name: string } }>(response);
+      if (!response.ok) {
+        toast.error("Failed to rename collection");
+        return;
+      }
+
+      setWorkspaces((previous) =>
+        previous.map((w) =>
+          w.id === activeWorkspace.id ? { ...w, name: data?.workspace?.name ?? trimmed } : w,
+        ),
+      );
+      toast.success("Collection renamed");
+    } catch {
+      toast.error("Failed to rename collection");
+    } finally {
+      setIsWorkspaceRenaming(false);
+    }
+  }, [activeWorkspace, session?.user?.id, workspaceRenameInput]);
+
+  const handleDeleteWorkspace = useCallback(async () => {
+    if (!activeWorkspace || !session?.user?.id) {
+      return;
+    }
+
+    setIsWorkspaceDeleting(true);
+    try {
+      const response = await fetch(`/api/workspaces/${activeWorkspace.id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        toast.error("Failed to delete collection");
+        return;
+      }
+
+      setWorkspaces((previous) => previous.filter((w) => w.id !== activeWorkspace.id));
+      setResources((previous) => previous.filter((r) => r.workspaceId !== activeWorkspace.id));
+      setActiveWorkspaceId(null);
+      setWorkspaceSettingsOpen(false);
+      toast.success("Collection deleted");
+    } catch {
+      toast.error("Failed to delete collection");
+    } finally {
+      setIsWorkspaceDeleting(false);
+    }
+  }, [activeWorkspace, session?.user?.id]);
+
   const handleRefreshLibrary = useCallback(() => {
     void Promise.all([fetchResources(), fetchCategories(), fetchWorkspaces()]);
   }, [fetchCategories, fetchResources, fetchWorkspaces]);
@@ -2251,6 +2337,9 @@ export default function Page() {
             onDeleteCategory={(category) => {
               void handleDeleteCategoryByName(category);
             }}
+            onOpenWorkspaceSettings={
+              activeWorkspace?.ownerUserId ? handleOpenWorkspaceSettings : undefined
+            }
             headingLabel={sidebarHeadingLabel}
             headingMeta={sidebarHeadingMeta}
             headingCount={categories.length}
@@ -2525,6 +2614,7 @@ export default function Page() {
                       onEdit={handleEdit}
                       isDeleting={deletingResourceId === resource.id}
                       canManage={canManageResourceCard(resource)}
+                      openLinksInSameTab={generalSettings.openLinksInSameTab}
                     />
                   ))}
                 </div>
@@ -2582,157 +2672,248 @@ export default function Page() {
       </div>
 
       <Dialog open={generalSettingsOpen} onOpenChange={setGeneralSettingsOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>General Settings</DialogTitle>
-            <DialogDescription>
-              Account and interface preferences. Changes are saved
-              automatically.
+            <DialogTitle>Preferences</DialogTitle>
+            <DialogDescription className="sr-only">
+              Account and interface preferences. Changes are saved automatically.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="rounded-md border border-border/70 bg-card/50 p-3">
-              <p className="text-xs font-semibold text-foreground">Account</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {isAuthenticated
-                  ? `${session?.user?.email ?? "Signed in"} · ${roleLabel}`
-                  : "Guest session"}
+          <div className="space-y-5">
+            {/* Account */}
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Account
               </p>
-            </div>
-
-            <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
-              <p className="text-xs font-semibold text-foreground">
-                Header visibility
-              </p>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-foreground">
-                    Show account email
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Display your email in the top header.
-                  </p>
-                </div>
-                <Switch
-                  checked={generalSettings.showAccountEmail}
-                  onCheckedChange={(checked) =>
-                    updateGeneralSetting("showAccountEmail", checked)
-                  }
-                  aria-label="Toggle account email in header"
-                />
-              </div>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-foreground">
-                    Show role label
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Show role under your account email.
-                  </p>
-                </div>
-                <Switch
-                  checked={generalSettings.showAccountRole}
-                  onCheckedChange={(checked) =>
-                    updateGeneralSetting("showAccountRole", checked)
-                  }
-                  aria-label="Toggle role label in header"
-                />
-              </div>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-foreground">
-                    Show mock mode badge
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Show environment mode in the header.
-                  </p>
-                </div>
-                <Switch
-                  checked={generalSettings.showMockModeBadge}
-                  onCheckedChange={(checked) =>
-                    updateGeneralSetting("showMockModeBadge", checked)
-                  }
-                  aria-label="Toggle mock mode badge"
-                />
+              <div className="rounded-md border border-border/70 bg-card/50 p-3">
+                {isAuthenticated ? (
+                  <>
+                    <p className="text-sm font-semibold text-foreground">
+                      {session?.user?.name ?? session?.user?.email?.split("@")[0] ?? "User"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {session?.user?.email}
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                      {roleLabel}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3 w-full text-xs"
+                      onClick={() => void signOut()}
+                    >
+                      <LogOut className="mr-2 h-3.5 w-3.5" />
+                      Log out
+                    </Button>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Guest session</p>
+                )}
               </div>
             </div>
 
-            <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
-              <p className="text-xs font-semibold text-foreground">
-                Section behavior
+            {/* General Preferences */}
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                General Preferences
               </p>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-foreground">
-                    Compact titles
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Use denser section heading spacing.
-                  </p>
+              <div className="space-y-3 rounded-md border border-border/70 bg-card/50 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Open links in same tab</p>
+                  <Switch
+                    checked={generalSettings.openLinksInSameTab}
+                    onCheckedChange={(checked) =>
+                      updateGeneralSetting("openLinksInSameTab", checked)
+                    }
+                    aria-label="Open links in same tab"
+                  />
                 </div>
-                <Switch
-                  checked={sectionPreferences.compactTitles}
-                  onCheckedChange={(checked) =>
-                    updateSectionPreference("compactTitles", checked)
-                  }
-                  aria-label="Toggle compact titles"
-                />
-              </div>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-foreground">
-                    Context lines
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Show workspace context under section titles.
-                  </p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Show account email</p>
+                  <Switch
+                    checked={generalSettings.showAccountEmail}
+                    onCheckedChange={(checked) =>
+                      updateGeneralSetting("showAccountEmail", checked)
+                    }
+                    aria-label="Show account email in header"
+                  />
                 </div>
-                <Switch
-                  checked={sectionPreferences.showContextLine}
-                  onCheckedChange={(checked) =>
-                    updateSectionPreference("showContextLine", checked)
-                  }
-                  aria-label="Toggle section context lines"
-                />
-              </div>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-foreground">
-                    Role hints
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Keep permissions visible inside section headers.
-                  </p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Show role label</p>
+                  <Switch
+                    checked={generalSettings.showAccountRole}
+                    onCheckedChange={(checked) =>
+                      updateGeneralSetting("showAccountRole", checked)
+                    }
+                    aria-label="Show role label in header"
+                  />
                 </div>
-                <Switch
-                  checked={sectionPreferences.showRoleHints}
-                  onCheckedChange={(checked) =>
-                    updateSectionPreference("showRoleHints", checked)
-                  }
-                  aria-label="Toggle role hints"
-                />
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Show mock mode badge</p>
+                  <Switch
+                    checked={generalSettings.showMockModeBadge}
+                    onCheckedChange={(checked) =>
+                      updateGeneralSetting("showMockModeBadge", checked)
+                    }
+                    aria-label="Show mock mode badge"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Compact titles</p>
+                  <Switch
+                    checked={sectionPreferences.compactTitles}
+                    onCheckedChange={(checked) =>
+                      updateSectionPreference("compactTitles", checked)
+                    }
+                    aria-label="Compact titles"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Context lines</p>
+                  <Switch
+                    checked={sectionPreferences.showContextLine}
+                    onCheckedChange={(checked) =>
+                      updateSectionPreference("showContextLine", checked)
+                    }
+                    aria-label="Context lines"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">Role hints</p>
+                  <Switch
+                    checked={sectionPreferences.showRoleHints}
+                    onCheckedChange={(checked) =>
+                      updateSectionPreference("showRoleHints", checked)
+                    }
+                    aria-label="Role hints"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="rounded-md border border-border/70 bg-card/50 p-3">
-              <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-                <span className="truncate font-medium text-foreground">
-                  Theme: {activeColorScheme?.name ?? "Default"}
-                </span>
-                <span className="shrink-0 text-muted-foreground">
-                  {currentSchemeIndex + 1}/{colorSchemes.length}
-                </span>
+            {/* Theme */}
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Theme
+              </p>
+              <div className="rounded-md border border-border/70 bg-card/50 p-3">
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                  <span className="flex items-center gap-1.5 font-medium text-foreground">
+                    <Palette className="h-3.5 w-3.5 text-primary" />
+                    {activeColorScheme?.name ?? "Default"}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {currentSchemeIndex + 1}/{colorSchemes.length}
+                  </span>
+                </div>
+                <Slider
+                  value={[currentSchemeIndex]}
+                  min={0}
+                  max={Math.max(0, colorSchemes.length - 1)}
+                  step={1}
+                  onValueChange={handleColorSchemePreview}
+                  onValueCommit={handleColorSchemeCommit}
+                  aria-label="Color scheme selector"
+                />
               </div>
-              <Slider
-                value={[currentSchemeIndex]}
-                min={0}
-                max={Math.max(0, colorSchemes.length - 1)}
-                step={1}
-                onValueChange={handleColorSchemePreview}
-                onValueCommit={handleColorSchemeCommit}
-                aria-label="Color scheme selector"
-              />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Workspace / Collection Settings */}
+      <Dialog
+        open={workspaceSettingsOpen}
+        onOpenChange={(open) => {
+          setWorkspaceSettingsOpen(open);
+          if (!open) {
+            setConfirmDeleteWorkspace(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Collection Settings</DialogTitle>
+            <DialogDescription className="sr-only">
+              Rename or delete this collection.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5">
+            {/* Collection Name */}
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Collection Name
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={workspaceRenameInput}
+                  onChange={(e) => setWorkspaceRenameInput(e.target.value)}
+                  placeholder="Collection name"
+                  maxLength={80}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      void handleRenameWorkspace();
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  disabled={
+                    isWorkspaceRenaming ||
+                    !workspaceRenameInput.trim() ||
+                    workspaceRenameInput.trim() === activeWorkspace?.name
+                  }
+                  onClick={() => void handleRenameWorkspace()}
+                >
+                  {isWorkspaceRenaming ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Delete */}
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Delete Collection
+              </p>
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Permanently deletes this collection and all its resources. There is no going back.
+                </p>
+                {confirmDeleteWorkspace ? (
+                  <div className="mt-3 flex gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="flex-1"
+                      disabled={isWorkspaceDeleting}
+                      onClick={() => void handleDeleteWorkspace()}
+                    >
+                      {isWorkspaceDeleting ? "Deleting…" : "Confirm delete"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmDeleteWorkspace(false)}
+                      disabled={isWorkspaceDeleting}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setConfirmDeleteWorkspace(true)}
+                  >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    Delete Collection
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </DialogContent>

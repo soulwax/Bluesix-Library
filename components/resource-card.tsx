@@ -41,12 +41,14 @@ function ResourceLinkCompactItem({
   note,
   url,
   faviconUrl,
+  openInSameTab = false,
 }: {
   linkId: string
   label: string
   note?: string | null
   url: string
   faviconUrl?: string | null
+  openInSameTab?: boolean
 }) {
   const hostname = useMemo(() => hostnameFromUrl(url), [url])
 
@@ -55,8 +57,8 @@ function ResourceLinkCompactItem({
       <TooltipTrigger asChild>
         <a
           href={url}
-          target="_blank"
-          rel="noopener noreferrer"
+          target={openInSameTab ? "_self" : "_blank"}
+          rel={openInSameTab ? undefined : "noopener noreferrer"}
           data-resource-link-id={linkId}
           className="group/link flex items-start gap-2 rounded-md border border-border/70 bg-secondary/20 p-2 transition-colors hover:border-primary/30 hover:bg-secondary/40"
         >
@@ -109,6 +111,7 @@ interface ResourceCardProps {
   onEdit: (resource: ResourceCard) => void
   isDeleting?: boolean
   canManage?: boolean
+  openLinksInSameTab?: boolean
 }
 
 export function ResourceCardItem({
@@ -118,6 +121,7 @@ export function ResourceCardItem({
   onEdit,
   isDeleting = false,
   canManage = false,
+  openLinksInSameTab = false,
 }: ResourceCardProps) {
   const [contextLinkId, setContextLinkId] = useState<string | null>(null)
 
@@ -261,6 +265,7 @@ export function ResourceCardItem({
                   note={link.note}
                   url={link.url}
                   faviconUrl={link.faviconUrl}
+                  openInSameTab={openLinksInSameTab}
                 />
               </li>
             ))}

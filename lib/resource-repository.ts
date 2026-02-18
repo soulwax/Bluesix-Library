@@ -1062,6 +1062,79 @@ export async function createResourceWorkspace(
   }
 }
 
+export async function renameResourceWorkspace(
+  id: string,
+  name: string,
+  ownerUserId: string,
+): Promise<ResourceWorkspace> {
+  await ensureSchema();
+  const db = getDb();
+
+  const normalizedId = normalizeAndValidateUuid(id, "Workspace ID");
+  const normalizedName = normalizeWorkspaceName(name);
+  const normalizedOwnerUserId = normalizeAndValidateUuid(ownerUserId, "Owner user ID");
+
+  if (!normalizedName) {
+    throw new Error("Workspace name is required.");
+  }
+
+  try {
+    const rows = await db
+      .update(resourceWorkspaces)
+      .set({ name: normalizedName, updatedAt: new Date() })
+      .where(
+        and(
+          eq(resourceWorkspaces.id, normalizedId),
+          eq(resourceWorkspaces.ownerUserId, normalizedOwnerUserId),
+        ),
+      )
+      .returning({
+        id: resourceWorkspaces.id,
+        name: resourceWorkspaces.name,
+        ownerUserId: resourceWorkspaces.ownerUserId,
+        createdAt: resourceWorkspaces.createdAt,
+        updatedAt: resourceWorkspaces.updatedAt,
+      });
+
+    const updated = rows[0];
+    if (!updated) {
+      throw new ResourceWorkspaceNotFoundError(normalizedId);
+    }
+
+    return normalizeWorkspaceRow(updated as ResourceWorkspaceRow);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ResourceWorkspaceAlreadyExistsError(normalizedName);
+    }
+    throw error;
+  }
+}
+
+export async function deleteResourceWorkspace(
+  id: string,
+  ownerUserId: string,
+): Promise<void> {
+  await ensureSchema();
+  const db = getDb();
+
+  const normalizedId = normalizeAndValidateUuid(id, "Workspace ID");
+  const normalizedOwnerUserId = normalizeAndValidateUuid(ownerUserId, "Owner user ID");
+
+  const rows = await db
+    .delete(resourceWorkspaces)
+    .where(
+      and(
+        eq(resourceWorkspaces.id, normalizedId),
+        eq(resourceWorkspaces.ownerUserId, normalizedOwnerUserId),
+      ),
+    )
+    .returning({ id: resourceWorkspaces.id });
+
+  if (rows.length === 0) {
+    throw new ResourceWorkspaceNotFoundError(normalizedId);
+  }
+}
+
 export async function listResourceCategories(options?: {
   userId?: string | null;
   workspaceId?: string | null;
