@@ -3197,7 +3197,6 @@ export default function Page() {
 
       void handleMoveResourceItem({
         itemId: input.itemId,
-        draggedLinkId: input.linkId,
         sourceCategoryId: input.sourceCategoryId,
         sourceCategoryName: input.sourceCategoryName,
         sourceIndex: input.sourceIndex,

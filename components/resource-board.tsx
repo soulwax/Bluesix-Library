@@ -38,7 +38,6 @@ export interface ResourceBoardColumn {
 
 export interface ResourceBoardMoveInput {
   itemId: string
-  draggedLinkId: string
   sourceCategoryId: string
   sourceCategoryName: string
   sourceIndex: number
@@ -63,7 +62,6 @@ interface ResourceBoardProps {
 
 interface DragState {
   itemId: string
-  draggedLinkId: string
   sourceCategoryId: string
   sourceCategoryName: string
   sourceIndex: number
@@ -203,7 +201,6 @@ export function ResourceBoard({
 
                     void onMoveItem({
                       itemId: dragState.itemId,
-                      draggedLinkId: dragState.draggedLinkId,
                       sourceCategoryId: dragState.sourceCategoryId,
                       sourceCategoryName: dragState.sourceCategoryName,
                       sourceIndex: dragState.sourceIndex,
@@ -236,12 +233,30 @@ export function ResourceBoard({
                         isDeleting={deletingResourceId === resource.id}
                         canManage={canManageResource(resource)}
                         openLinksInSameTab={openLinksInSameTab}
+                        canDragCard={canDrag}
+                        isCardDragging={dragState?.itemId === resource.id}
+                        onCardDragStart={(event) => {
+                          if (!resolvedCategoryId || !canDrag) {
+                            event.preventDefault()
+                            return
+                          }
+
+                          event.dataTransfer.effectAllowed = "move"
+                          event.dataTransfer.setData("text/plain", resource.id)
+                          setDragState({
+                            itemId: resource.id,
+                            sourceCategoryId: resolvedCategoryId,
+                            sourceCategoryName: column.name,
+                            sourceIndex: index,
+                          })
+                          setDropTarget({
+                            categoryId: resolvedCategoryId,
+                            categoryName: column.name,
+                            index,
+                          })
+                        }}
+                        onCardDragEnd={handleDragEnd}
                         canDragLinks={canDrag}
-                        draggingLinkId={
-                          dragState?.itemId === resource.id
-                            ? dragState.draggedLinkId
-                            : null
-                        }
                         onLinkDragStart={(link, event) => {
                           if (!resolvedCategoryId || !canDrag) {
                             event.preventDefault()
@@ -261,20 +276,7 @@ export function ResourceBoard({
                             LINK_ITEM_DRAG_MIME,
                             serializeLinkItemDragPayload(dragPayload),
                           )
-                          setDragState({
-                            itemId: resource.id,
-                            draggedLinkId: link.id,
-                            sourceCategoryId: resolvedCategoryId,
-                            sourceCategoryName: column.name,
-                            sourceIndex: index,
-                          })
-                          setDropTarget({
-                            categoryId: resolvedCategoryId,
-                            categoryName: column.name,
-                            index,
-                          })
                         }}
-                        onLinkDragEnd={handleDragEnd}
                       />
 
                       <DropSlot
@@ -309,7 +311,6 @@ export function ResourceBoard({
 
                           void onMoveItem({
                             itemId: dragState.itemId,
-                            draggedLinkId: dragState.draggedLinkId,
                             sourceCategoryId: dragState.sourceCategoryId,
                             sourceCategoryName: dragState.sourceCategoryName,
                             sourceIndex: dragState.sourceIndex,

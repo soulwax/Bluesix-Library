@@ -23,6 +23,7 @@ import { getTagToneClasses } from "@/lib/tag-styles"
 import {
   ClipboardCopy,
   ExternalLink,
+  GripVertical,
   Pencil,
   Trash2,
 } from "lucide-react"
@@ -149,6 +150,10 @@ interface ResourceCardProps {
   isDeleting?: boolean
   canManage?: boolean
   openLinksInSameTab?: boolean
+  canDragCard?: boolean
+  isCardDragging?: boolean
+  onCardDragStart?: (event: React.DragEvent<HTMLElement>) => void
+  onCardDragEnd?: () => void
   canDragLinks?: boolean
   draggingLinkId?: string | null
   onLinkDragStart?: (
@@ -176,6 +181,10 @@ export function ResourceCardItem({
   isDeleting = false,
   canManage = false,
   openLinksInSameTab = false,
+  canDragCard = false,
+  isCardDragging = false,
+  onCardDragStart,
+  onCardDragEnd,
   canDragLinks = false,
   draggingLinkId = null,
   onLinkDragStart,
@@ -264,6 +273,7 @@ export function ResourceCardItem({
         <div
           className={cn(
             "group flex flex-col rounded-md border border-border/45 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-background/60",
+            isCardDragging ? "border-primary/60 bg-background/70 opacity-65" : "",
           )}
           data-resource-item-id={resource.id}
           data-resource-category-id={categoryId ?? undefined}
@@ -272,9 +282,24 @@ export function ResourceCardItem({
           onContextMenu={handleContextMenu}
         >
           <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {resource.links.length} link{resource.links.length === 1 ? "" : "s"}
-            </p>
+            <div className="flex items-center gap-1.5">
+              {canDragCard ? (
+                <span
+                  draggable
+                  onDragStart={(event) => onCardDragStart?.(event)}
+                  onDragEnd={onCardDragEnd}
+                  aria-label={`Drag ${resource.category} resource card`}
+                  title="Drag card"
+                  className="inline-flex h-5 w-5 cursor-grab items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground active:cursor-grabbing"
+                >
+                  <GripVertical className="h-3.5 w-3.5" />
+                </span>
+              ) : null}
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {resource.links.length} link
+                {resource.links.length === 1 ? "" : "s"}
+              </p>
+            </div>
             {canManage ? (
               <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                 <Tooltip>
