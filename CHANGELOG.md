@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AI Inbox quick actions for Toby-style workflows: `Group`, `Short names`, `Sort`, `Dedupe`, and `Summary`
+- New `POST /api/links/suggest-category-name` endpoint for short category naming from analyzed link clusters (AI + deterministic fallback)
+- New `POST /api/links/summarize-batch` endpoint for batch triage summaries with focus categories and recommended next actions
+
+### Changed
+
+- AI Inbox modal now uses unified busy-state locking across analyze/import/merge/rename/summary operations
+- AI Inbox summary panel now displays model metadata (`AI` vs fallback), focus categories, and actionable follow-up steps
+
 ## [0.2.1] - 2026-02-18
 
 ### Added

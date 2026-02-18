@@ -193,6 +193,33 @@ interface AiInboxBatchResponse extends ApiErrorResponse {
   aiApplied?: number;
 }
 
+interface AiInboxCategoryNameSuggestionResponse extends ApiErrorResponse {
+  suggestedName?: string;
+  usedAi?: boolean;
+  model?: string | null;
+  warning?: string | null;
+}
+
+interface AiInboxSummaryResponse extends ApiErrorResponse {
+  summary?: string;
+  actionItems?: string[];
+  focusCategories?: string[];
+  usedAi?: boolean;
+  model?: string | null;
+  warning?: string | null;
+  analyzed?: number;
+}
+
+interface AiInboxSummaryState {
+  summary: string;
+  actionItems: string[];
+  focusCategories: string[];
+  usedAi: boolean;
+  model: string | null;
+  generatedAt: string;
+  analyzed: number;
+}
+
 interface AskLibraryCitation {
   index: number;
   resourceId: string;
@@ -529,6 +556,37 @@ function normalizeAiInboxCategory(
   return "General";
 }
 
+function normalizeAiInboxCategoryKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toShortAiInboxCategoryName(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "General";
+  }
+
+  return normalized.split(" ").slice(0, 3).join(" ").slice(0, 28);
+}
+
+function scoreAiInboxItemPriority(item: AiInboxItem): number {
+  let score = 0;
+  if (item.selected) {
+    score += 40;
+  }
+
+  score += item.usedAi ? 8 : 0;
+  score += item.tags.length * 2;
+  score += item.category?.trim() ? 4 : 0;
+  score -= item.nearMatches.length * 12;
+  score -= item.exactMatches.length * 50;
+  return score;
+}
+
 function summarizeDuplicateMatches(matches: LinkDuplicateMatch[]): string {
   if (matches.length === 0) {
     return "none";
@@ -678,6 +736,12 @@ export default function Page() {
   const [isAiInboxAnalyzing, setIsAiInboxAnalyzing] = useState(false);
   const [isAiInboxImporting, setIsAiInboxImporting] = useState(false);
   const [isAiInboxMerging, setIsAiInboxMerging] = useState(false);
+  const [isAiInboxRenamingCategories, setIsAiInboxRenamingCategories] =
+    useState(false);
+  const [isAiInboxSummarizing, setIsAiInboxSummarizing] = useState(false);
+  const [aiInboxSummary, setAiInboxSummary] = useState<AiInboxSummaryState | null>(
+    null,
+  );
   const [askLibraryOpen, setAskLibraryOpen] = useState(false);
   const [askLibraryQuery, setAskLibraryQuery] = useState("");
   const [askLibraryAnswer, setAskLibraryAnswer] = useState<string | null>(null);
@@ -835,6 +899,12 @@ export default function Page() {
         (editingCategoryRecord?.symbol?.trim() ?? ""));
   const canUseAiFeatures = isAuthenticated && generalSettings.aiFeaturesEnabled;
   const isPasteFlowInProgress = pasteFlowActivityCount > 0;
+  const isAiInboxBusy =
+    isAiInboxAnalyzing ||
+    isAiInboxImporting ||
+    isAiInboxMerging ||
+    isAiInboxRenamingCategories ||
+    isAiInboxSummarizing;
   const globalActivityMessage = useMemo(() => {
     if (isPasteFlowInProgress) {
       return "Processing pasted URL...";
@@ -850,6 +920,12 @@ export default function Page() {
     }
     if (isAiInboxMerging) {
       return "Merging duplicate links...";
+    }
+    if (isAiInboxRenamingCategories) {
+      return "Renaming categories...";
+    }
+    if (isAiInboxSummarizing) {
+      return "Summarizing AI inbox...";
     }
     if (isAskingLibrary) {
       return "Analyzing your library...";
@@ -902,6 +978,8 @@ export default function Page() {
     isAiInboxAnalyzing,
     isAiInboxImporting,
     isAiInboxMerging,
+    isAiInboxRenamingCategories,
+    isAiInboxSummarizing,
     isAiPastePreferenceSaving,
     isAskingLibrary,
     isAuthSubmitting,
@@ -3304,6 +3382,7 @@ export default function Page() {
     }
 
     setAiInboxUseAi(canUseAiFeatures);
+    setAiInboxSummary(null);
     setAiInboxOpen(true);
   }, [activeWorkspaceId, canManageResources, canUseAiFeatures]);
 
@@ -3376,6 +3455,7 @@ export default function Page() {
       }));
 
       setAiInboxItems(nextItems);
+      setAiInboxSummary(null);
       const exactCount = nextItems.filter((item) => item.exactMatches.length > 0).length;
       toast.success("AI Inbox analyzed links", {
         description:
@@ -3410,6 +3490,350 @@ export default function Page() {
     },
     [],
   );
+
+  const handleAiInboxAutoGroup = useCallback(() => {
+    if (aiInboxItems.length === 0) {
+      toast.error("No links to group", {
+        description: "Analyze at least one URL first.",
+      });
+      return;
+    }
+
+    setAiInboxItems((previous) => {
+      const canonicalCategoryByKey = new Map<string, string>();
+      const normalized = previous.map((item) => {
+        const nextCategory = normalizeAiInboxCategory(item.category, activeCategory);
+        const key = normalizeAiInboxCategoryKey(nextCategory);
+        if (!canonicalCategoryByKey.has(key)) {
+          canonicalCategoryByKey.set(key, nextCategory);
+        }
+        return {
+          ...item,
+          category: canonicalCategoryByKey.get(key) ?? nextCategory,
+        };
+      });
+
+      return [...normalized].sort((left, right) => {
+        const categoryDiff = (left.category ?? "").localeCompare(
+          right.category ?? "",
+          undefined,
+          { sensitivity: "base" },
+        );
+        if (categoryDiff !== 0) {
+          return categoryDiff;
+        }
+
+        return left.label.localeCompare(right.label, undefined, {
+          sensitivity: "base",
+        });
+      });
+    });
+
+    setAiInboxSummary(null);
+    const groupedCount = new Set(
+      aiInboxItems.map((item) =>
+        normalizeAiInboxCategoryKey(
+          normalizeAiInboxCategory(item.category, activeCategory),
+        ),
+      ),
+    ).size;
+    toast.success("Grouped by category", {
+      description: `${groupedCount} grouped bucket(s) ready.`,
+    });
+  }, [activeCategory, aiInboxItems]);
+
+  const handleAiInboxSuggestShortNames = useCallback(async () => {
+    if (aiInboxItems.length === 0) {
+      toast.error("No links available", {
+        description: "Analyze at least one URL first.",
+      });
+      return;
+    }
+
+    const grouped = new Map<
+      string,
+      {
+        currentName: string;
+        links: Array<{
+          url: string;
+          label: string;
+          note: string | null;
+        }>;
+      }
+    >();
+
+    for (const item of aiInboxItems) {
+      const currentName = normalizeAiInboxCategory(item.category, activeCategory);
+      const key = normalizeAiInboxCategoryKey(currentName);
+      const bucket = grouped.get(key) ?? {
+        currentName,
+        links: [],
+      };
+
+      bucket.links.push({
+        url: item.url,
+        label: item.label,
+        note: item.note || null,
+      });
+      grouped.set(key, bucket);
+    }
+
+    if (grouped.size === 0) {
+      return;
+    }
+
+    const shouldUseAi = aiInboxUseAi && canUseAiFeatures;
+    setIsAiInboxRenamingCategories(true);
+    try {
+      const renamePairs = await Promise.all(
+        [...grouped.entries()].map(async ([key, value]) => {
+          const fallbackName = toShortAiInboxCategoryName(value.currentName);
+          if (!shouldUseAi) {
+            return {
+              key,
+              nextName: fallbackName,
+              usedAi: false,
+              warning: null as string | null,
+            };
+          }
+
+          try {
+            const response = await fetch("/api/links/suggest-category-name", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                currentName: value.currentName,
+                links: value.links,
+                useAi: true,
+              }),
+            });
+            const payload =
+              await readJson<AiInboxCategoryNameSuggestionResponse>(response);
+            if (!response.ok) {
+              return {
+                key,
+                nextName: fallbackName,
+                usedAi: false,
+                warning:
+                  payload?.error ?? "Could not generate a category name suggestion.",
+              };
+            }
+
+            const nextName = toShortAiInboxCategoryName(
+              payload?.suggestedName ?? fallbackName,
+            );
+            return {
+              key,
+              nextName,
+              usedAi: payload?.usedAi === true,
+              warning: payload?.warning ?? null,
+            };
+          } catch (error) {
+            return {
+              key,
+              nextName: fallbackName,
+              usedAi: false,
+              warning:
+                error instanceof Error
+                  ? error.message
+                  : "Category naming request failed.",
+            };
+          }
+        }),
+      );
+
+      const renameMap = new Map<string, string>();
+      let aiAppliedCount = 0;
+      let warningCount = 0;
+      for (const result of renamePairs) {
+        renameMap.set(result.key, result.nextName);
+        if (result.usedAi) {
+          aiAppliedCount += 1;
+        }
+        if (result.warning) {
+          warningCount += 1;
+        }
+      }
+
+      setAiInboxItems((previous) =>
+        previous.map((item) => {
+          const key = normalizeAiInboxCategoryKey(
+            normalizeAiInboxCategory(item.category, activeCategory),
+          );
+          const renamed = renameMap.get(key);
+          if (!renamed) {
+            return item;
+          }
+
+          return {
+            ...item,
+            category: renamed,
+          };
+        }),
+      );
+      setAiInboxSummary(null);
+
+      toast.success("Category names updated", {
+        description: `${renameMap.size} category name(s) adjusted${aiAppliedCount > 0 ? `, ${aiAppliedCount} AI-assisted` : ""}${warningCount > 0 ? `, ${warningCount} fallback` : ""}.`,
+      });
+    } finally {
+      setIsAiInboxRenamingCategories(false);
+    }
+  }, [
+    activeCategory,
+    aiInboxItems,
+    aiInboxUseAi,
+    canUseAiFeatures,
+  ]);
+
+  const handleAiInboxSortByPriority = useCallback(() => {
+    if (aiInboxItems.length === 0) {
+      toast.error("No links to sort", {
+        description: "Analyze at least one URL first.",
+      });
+      return;
+    }
+
+    setAiInboxItems((previous) =>
+      [...previous].sort((left, right) => {
+        const scoreDiff =
+          scoreAiInboxItemPriority(right) - scoreAiInboxItemPriority(left);
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+
+        const categoryDiff = (left.category ?? "").localeCompare(
+          right.category ?? "",
+          undefined,
+          { sensitivity: "base" },
+        );
+        if (categoryDiff !== 0) {
+          return categoryDiff;
+        }
+
+        return left.label.localeCompare(right.label, undefined, {
+          sensitivity: "base",
+        });
+      }),
+    );
+    setAiInboxSummary(null);
+    toast.success("Sorted by priority", {
+      description: "Most import-ready links are now listed first.",
+    });
+  }, [aiInboxItems]);
+
+  const handleAiInboxDeduplicate = useCallback(() => {
+    if (aiInboxItems.length === 0) {
+      toast.error("No links to deduplicate", {
+        description: "Analyze at least one URL first.",
+      });
+      return;
+    }
+
+    let removedInBatch = 0;
+    let uncheckedExact = 0;
+    setAiInboxItems((previous) => {
+      const seenUrls = new Set<string>();
+      const next: AiInboxItem[] = [];
+
+      for (const item of previous) {
+        const normalizedUrl =
+          normalizeHttpUrl(item.url)?.toLowerCase() ??
+          item.url.trim().toLowerCase();
+        if (seenUrls.has(normalizedUrl)) {
+          removedInBatch += 1;
+          continue;
+        }
+
+        seenUrls.add(normalizedUrl);
+        if (item.exactMatches.length > 0 && item.selected) {
+          uncheckedExact += 1;
+          next.push({
+            ...item,
+            selected: false,
+          });
+          continue;
+        }
+
+        next.push(item);
+      }
+
+      return next;
+    });
+
+    setAiInboxSummary(null);
+    toast.success("Deduplication applied", {
+      description: `${removedInBatch} in-batch duplicate(s) removed, ${uncheckedExact} exact-match item(s) unchecked.`,
+    });
+  }, [aiInboxItems]);
+
+  const handleAiInboxSummarize = useCallback(async () => {
+    if (aiInboxItems.length === 0) {
+      toast.error("No links to summarize", {
+        description: "Analyze at least one URL first.",
+      });
+      return;
+    }
+
+    setIsAiInboxSummarizing(true);
+    try {
+      const response = await fetch("/api/links/summarize-batch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          useAi: aiInboxUseAi && canUseAiFeatures,
+          items: aiInboxItems.map((item) => ({
+            url: item.url,
+            label: item.label,
+            note: item.note,
+            category: item.category,
+            tags: item.tags,
+            exactMatchCount: item.exactMatches.length,
+            nearMatchCount: item.nearMatches.length,
+          })),
+        }),
+      });
+      const payload = await readJson<AiInboxSummaryResponse>(response);
+      if (!response.ok || !payload?.summary) {
+        throw new Error(payload?.error ?? "Could not summarize AI inbox links.");
+      }
+
+      setAiInboxSummary({
+        summary: payload.summary,
+        actionItems: payload.actionItems ?? [],
+        focusCategories: payload.focusCategories ?? [],
+        usedAi: payload.usedAi === true,
+        model: payload.model ?? null,
+        generatedAt: new Date().toISOString(),
+        analyzed: payload.analyzed ?? aiInboxItems.length,
+      });
+
+      toast.success("Summary ready", {
+        description:
+          payload.usedAi === true
+            ? `Generated with AI${payload.model ? ` (${payload.model})` : ""}.`
+            : "Generated with fallback heuristics.",
+      });
+      if (payload.warning) {
+        toast.warning("Summary fallback", {
+          description: payload.warning,
+        });
+      }
+    } catch (error) {
+      toast.error("Summary failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not summarize the current AI inbox.",
+      });
+    } finally {
+      setIsAiInboxSummarizing(false);
+    }
+  }, [aiInboxItems, aiInboxUseAi, canUseAiFeatures]);
 
   const handleSmartMergeAiInbox = useCallback(async () => {
     if (!canManageResources || !activeWorkspaceId) {
@@ -3542,6 +3966,7 @@ export default function Page() {
         setAiInboxItems((previous) =>
           previous.filter((item) => !mergedItemIds.has(item.id)),
         );
+        setAiInboxSummary(null);
       }
 
       if (mergedCount > 0) {
@@ -3642,6 +4067,9 @@ export default function Page() {
       setAiInboxItems((previous) =>
         previous.filter((item) => !importedIds.has(item.url) || !item.selected),
       );
+      if (createdResources.length > 0) {
+        setAiInboxSummary(null);
+      }
 
       if (createdResources.length > 0) {
         toast.success("AI Inbox import complete", {
@@ -4148,9 +4576,7 @@ export default function Page() {
             onClick={handleOpenAiInbox}
             disabled={
               isResourcesLoading ||
-              isAiInboxAnalyzing ||
-              isAiInboxImporting ||
-              isAiInboxMerging ||
+              isAiInboxBusy ||
               !canManageResources ||
               !activeWorkspaceId
             }
@@ -4658,9 +5084,7 @@ export default function Page() {
             <ContextMenuItem
               disabled={
                 !canManageResources ||
-                isAiInboxAnalyzing ||
-                isAiInboxImporting ||
-                isAiInboxMerging ||
+                isAiInboxBusy ||
                 isResourcesLoading ||
                 !activeWorkspaceId
               }
@@ -4751,7 +5175,7 @@ export default function Page() {
       <Dialog
         open={aiInboxOpen}
         onOpenChange={(open) => {
-          if (isAiInboxAnalyzing || isAiInboxImporting || isAiInboxMerging) {
+          if (isAiInboxBusy) {
             return;
           }
           setAiInboxOpen(open);
@@ -4775,7 +5199,7 @@ export default function Page() {
                 onChange={(event) => setAiInboxRawInput(event.target.value)}
                 placeholder="Paste one or more URLs (one per line or mixed text)..."
                 rows={6}
-                disabled={isAiInboxAnalyzing || isAiInboxImporting || isAiInboxMerging}
+                disabled={isAiInboxBusy}
               />
               <p className="text-xs text-muted-foreground">
                 Up to {AI_INBOX_MAX_URLS} URLs per run.
@@ -4793,9 +5217,7 @@ export default function Page() {
                     onCheckedChange={(checked) => setAiInboxUseAi(checked)}
                     disabled={
                       !canUseAiFeatures ||
-                      isAiInboxAnalyzing ||
-                      isAiInboxImporting ||
-                      isAiInboxMerging
+                      isAiInboxBusy
                     }
                     aria-label="Use AI for AI Inbox suggestions"
                   />
@@ -4813,9 +5235,7 @@ export default function Page() {
                   variant="outline"
                   onClick={() => void handleAnalyzeAiInbox()}
                   disabled={
-                    isAiInboxAnalyzing ||
-                    isAiInboxImporting ||
-                    isAiInboxMerging ||
+                    isAiInboxBusy ||
                     aiInboxRawInput.trim().length === 0
                   }
                 >
@@ -4824,11 +5244,49 @@ export default function Page() {
                 <Button
                   type="button"
                   variant="outline"
+                  onClick={handleAiInboxAutoGroup}
+                  disabled={isAiInboxBusy || aiInboxItems.length === 0}
+                >
+                  Group
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleAiInboxSuggestShortNames()}
+                  disabled={isAiInboxBusy || aiInboxItems.length === 0}
+                >
+                  {isAiInboxRenamingCategories ? "Renaming..." : "Short names"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAiInboxSortByPriority}
+                  disabled={isAiInboxBusy || aiInboxItems.length === 0}
+                >
+                  Sort
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAiInboxDeduplicate}
+                  disabled={isAiInboxBusy || aiInboxItems.length === 0}
+                >
+                  Dedupe
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleAiInboxSummarize()}
+                  disabled={isAiInboxBusy || aiInboxItems.length === 0}
+                >
+                  {isAiInboxSummarizing ? "Summarizing..." : "Summary"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={() => void handleSmartMergeAiInbox()}
                   disabled={
-                    isAiInboxAnalyzing ||
-                    isAiInboxImporting ||
-                    isAiInboxMerging ||
+                    isAiInboxBusy ||
                     aiInboxMergeCandidateCount === 0
                   }
                 >
@@ -4840,9 +5298,7 @@ export default function Page() {
                   type="button"
                   onClick={() => void handleImportAiInbox()}
                   disabled={
-                    isAiInboxAnalyzing ||
-                    isAiInboxImporting ||
-                    isAiInboxMerging ||
+                    isAiInboxBusy ||
                     aiInboxSelectedCount === 0
                   }
                 >
@@ -4852,6 +5308,35 @@ export default function Page() {
                 </Button>
               </div>
             </div>
+
+            {aiInboxSummary ? (
+              <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Batch summary
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">
+                    {aiInboxSummary.usedAi
+                      ? `AI${aiInboxSummary.model ? ` (${aiInboxSummary.model})` : ""}`
+                      : "Fallback"}
+                    {` • ${aiInboxSummary.analyzed} link(s)`}
+                  </span>
+                </div>
+                <p className="text-sm text-foreground">{aiInboxSummary.summary}</p>
+                {aiInboxSummary.focusCategories.length > 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Focus categories: {aiInboxSummary.focusCategories.join(", ")}
+                  </p>
+                ) : null}
+                {aiInboxSummary.actionItems.length > 0 ? (
+                  <ul className="space-y-1 text-xs text-muted-foreground">
+                    {aiInboxSummary.actionItems.map((action) => (
+                      <li key={action}>• {action}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
 
             {aiInboxItems.length > 0 ? (
               <div className="space-y-2">
@@ -4889,7 +5374,7 @@ export default function Page() {
                                 selected: event.target.checked,
                               }))
                             }
-                            disabled={isAiInboxImporting || isAiInboxMerging}
+                            disabled={isAiInboxBusy}
                             className="mt-0.5 h-4 w-4 rounded border-border bg-background"
                           />
                           <span className="break-all text-xs text-foreground">
@@ -4930,7 +5415,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Label"
-                          disabled={isAiInboxImporting || isAiInboxMerging}
+                          disabled={isAiInboxBusy}
                         />
                         <Input
                           value={item.category ?? ""}
@@ -4941,7 +5426,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Category"
-                          disabled={isAiInboxImporting || isAiInboxMerging}
+                          disabled={isAiInboxBusy}
                         />
                         <Input
                           value={item.note}
@@ -4952,7 +5437,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Note"
-                          disabled={isAiInboxImporting || isAiInboxMerging}
+                          disabled={isAiInboxBusy}
                           className="sm:col-span-2"
                         />
                         <Input
@@ -4969,7 +5454,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Tags (comma separated)"
-                          disabled={isAiInboxImporting || isAiInboxMerging}
+                          disabled={isAiInboxBusy}
                           className="sm:col-span-2"
                         />
                       </div>
