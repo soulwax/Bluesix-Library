@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 
 import { auth } from "@/auth"
+import { appendAskLibraryThreadInteraction } from "@/lib/ask-library-thread-repository"
+import { hasDatabaseEnv } from "@/lib/env"
 import { askLibraryQuestion } from "@/lib/library-ask"
 import { listResourcesService } from "@/lib/resource-service"
 
@@ -14,8 +16,13 @@ const historyTurnSchema = z.object({
 
 const requestSchema = z.object({
   question: z.string().trim().min(2).max(500),
+  threadId: z.string().uuid().nullable().optional(),
   workspaceId: z.string().uuid().nullable().optional(),
   category: z.string().trim().min(1).max(80).nullable().optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(12).optional(),
+  scopeWorkspace: z.boolean().optional(),
+  scopeCategory: z.boolean().optional(),
+  scopeTags: z.boolean().optional(),
   useAi: z.boolean().optional(),
   maxCitations: z.number().int().min(1).max(8).optional(),
   history: z.array(historyTurnSchema).max(8).optional(),
@@ -50,18 +57,40 @@ export async function POST(request: Request) {
       userId: session?.user?.id ?? null,
       includeAllWorkspaces,
     })
+    const scopeWorkspace = input.scopeWorkspace !== false
+    const scopeCategory = input.scopeCategory !== false
+    const scopeTags = input.scopeTags === true
+    const scopedTagSet = new Set(
+      (scopeTags ? input.tags ?? [] : [])
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag) => tag.length > 0)
+    )
 
     const scopedResources = resources.filter((resource) => {
-      if (input.workspaceId && resource.workspaceId !== input.workspaceId) {
+      if (
+        scopeWorkspace &&
+        input.workspaceId &&
+        resource.workspaceId !== input.workspaceId
+      ) {
         return false
       }
 
       if (
+        scopeCategory &&
         input.category &&
         input.category.toLowerCase() !== "all" &&
         resource.category.toLowerCase() !== input.category.toLowerCase()
       ) {
         return false
+      }
+
+      if (scopedTagSet.size > 0) {
+        const hasMatchingTag = resource.tags.some((tag) =>
+          scopedTagSet.has(tag.toLowerCase())
+        )
+        if (!hasMatchingTag) {
+          return false
+        }
       }
 
       return true
@@ -75,7 +104,38 @@ export async function POST(request: Request) {
       history: input.history,
     })
 
-    return NextResponse.json(result)
+    let threadId = input.threadId ?? null
+    let threadTitle: string | null = null
+
+    if (session?.user?.id && hasDatabaseEnv()) {
+      try {
+        const persisted = await appendAskLibraryThreadInteraction({
+          userId: session.user.id,
+          threadId: input.threadId,
+          workspaceId: input.workspaceId ?? null,
+          question: result.question,
+          answer: result.answer,
+          usedAi: result.usedAi,
+          model: result.model,
+          citations: result.citations,
+          reasoning: result.reasoning,
+          followUpSuggestions: result.followUpSuggestions,
+        })
+        threadId = persisted.id
+        threadTitle = persisted.title
+      } catch (persistError) {
+        console.error(
+          "Ask Library thread persistence failed:",
+          persistError instanceof Error ? persistError.message : persistError
+        )
+      }
+    }
+
+    return NextResponse.json({
+      ...result,
+      threadId,
+      threadTitle,
+    })
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(

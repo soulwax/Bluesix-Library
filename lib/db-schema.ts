@@ -4,6 +4,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -285,6 +286,43 @@ export const aiPastePreferences = pgTable(
       sql`${table.decision} IN ('accepted', 'declined')`
     ),
     index("ai_paste_preferences_updated_at_idx").on(table.updatedAt),
+  ]
+)
+
+export const askLibraryThreads = pgTable(
+  "ask_library_threads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => appUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => resourceWorkspaces.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    conversationJson: jsonb("conversation_json").notNull().default(sql`'[]'::jsonb`),
+    lastQuestion: text("last_question"),
+    lastAnswer: text("last_answer"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "ask_library_threads_title_length_check",
+      sql`char_length(${table.title}) <= 120`
+    ),
+    index("ask_library_threads_user_id_updated_at_idx").on(
+      table.userId,
+      table.updatedAt
+    ),
+    index("ask_library_threads_workspace_id_updated_at_idx").on(
+      table.workspaceId,
+      table.updatedAt
+    ),
   ]
 )
 

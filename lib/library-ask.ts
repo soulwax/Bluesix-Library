@@ -9,6 +9,7 @@ const DEFAULT_MAX_CITATIONS = 5
 const MAX_CITATIONS = 8
 const MAX_HISTORY_ITEMS = 8
 const QUERY_CONTEXT_USER_TURN_COUNT = 2
+const MAX_FOLLOW_UP_SUGGESTIONS = 4
 
 export class MissingPerplexityApiKeyError extends Error {
   constructor() {
@@ -47,6 +48,7 @@ export interface AskLibraryResult {
   answer: string
   citations: AskLibraryCitation[]
   reasoning: AskLibraryReasoning
+  followUpSuggestions: string[]
   usedAi: boolean
   model: string | null
 }
@@ -255,6 +257,56 @@ function buildReasoning(
   }
 }
 
+function uniqueSuggestions(values: string[]): string[] {
+  const deduped = new Map<string, string>()
+  for (const value of values) {
+    const normalized = normalizeWhitespace(value).slice(0, 200)
+    if (!normalized) {
+      continue
+    }
+
+    const key = normalized.toLowerCase()
+    if (!deduped.has(key)) {
+      deduped.set(key, normalized)
+    }
+  }
+
+  return [...deduped.values()].slice(0, MAX_FOLLOW_UP_SUGGESTIONS)
+}
+
+function buildFollowUpSuggestions(
+  question: string,
+  citations: AskLibraryCitation[],
+  reasoning: AskLibraryReasoning,
+  hasHistory: boolean
+): string[] {
+  if (citations.length === 0) {
+    const primaryToken = reasoning.queryTokens[0] ?? "this topic"
+    return uniqueSuggestions([
+      `Can you search broader sources about ${primaryToken}?`,
+      "Which category should I explore first for this question?",
+      "What keywords should I try to find better matches?",
+    ])
+  }
+
+  const topCitation = citations[0]
+  const topTag = topCitation?.tags[0]
+  const secondaryCitation = citations[1]
+
+  return uniqueSuggestions([
+    `Can you summarize key takeaways from [${topCitation.index}] ${topCitation.linkLabel}?`,
+    topTag
+      ? `What else in ${topCitation.category} covers ${topTag}?`
+      : `What else in ${topCitation.category} is most relevant here?`,
+    secondaryCitation
+      ? `Compare [${topCitation.index}] and [${secondaryCitation.index}] for tradeoffs.`
+      : `What should I read next after [${topCitation.index}]?`,
+    hasHistory
+      ? `Given our thread, what is the next best action for "${question}"?`
+      : `What should I ask next to narrow this down further?`,
+  ])
+}
+
 function buildDeterministicAnswer(
   question: string,
   citations: AskLibraryCitation[],
@@ -425,6 +477,12 @@ export async function askLibraryQuestion(
     (citation) => citation.linkUrl.trim().length > 0
   )
   const reasoning = buildReasoning(question, tokens, citations)
+  const followUpSuggestions = buildFollowUpSuggestions(
+    question,
+    citations,
+    reasoning,
+    history.length > 0
+  )
 
   if (citations.length === 0) {
     return {
@@ -432,6 +490,7 @@ export async function askLibraryQuestion(
       answer: buildDeterministicAnswer(question, citations, history.length > 0),
       citations,
       reasoning,
+      followUpSuggestions,
       usedAi: false,
       model: null,
     }
@@ -445,6 +504,7 @@ export async function askLibraryQuestion(
         answer: aiResult.answer,
         citations,
         reasoning,
+        followUpSuggestions,
         usedAi: true,
         model: aiResult.model,
       }
@@ -458,6 +518,7 @@ export async function askLibraryQuestion(
     answer: buildDeterministicAnswer(question, citations, history.length > 0),
     citations,
     reasoning,
+    followUpSuggestions,
     usedAi: false,
     model: null,
   }

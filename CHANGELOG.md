@@ -10,11 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Ask Library multi-turn conversation support in the dialog, with follow-up questions using recent thread context
 - Ask Library explanation metadata (`Why this answer`) including matched keywords, primary categories, and confidence level
+- Ask Library thread persistence (database-backed) per user/workspace, including new thread listing/detail APIs
+- Ask Library follow-up suggestion generation and one-click follow-up actions in the answer panel
+- New migration `0012_noble_molecule` creating `ask_library_threads`
 
 ### Changed
 
 - Ask Library API now accepts bounded conversation history and uses it to improve retrieval relevance for follow-up prompts
 - Citation rendering now includes per-source match confidence percentages
+- Ask Library request scoping now supports explicit workspace/category/tags toggles for faster refinements
 
 ## [0.1.11] - 2026-02-18
 

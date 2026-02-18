@@ -185,6 +185,24 @@ interface AskLibraryConversationTurn extends AskLibraryConversationTurnPayload {
   model?: string | null;
   citations?: AskLibraryCitation[];
   reasoning?: AskLibraryReasoning | null;
+  followUpSuggestions?: string[];
+  createdAt?: string;
+}
+
+interface AskLibraryThreadSummary {
+  id: string;
+  userId: string;
+  workspaceId: string | null;
+  title: string;
+  turnCount: number;
+  lastQuestion: string | null;
+  lastAnswer: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AskLibraryThreadDetail extends AskLibraryThreadSummary {
+  conversation: AskLibraryConversationTurn[];
 }
 
 interface AskLibraryResponse extends ApiErrorResponse {
@@ -192,8 +210,19 @@ interface AskLibraryResponse extends ApiErrorResponse {
   answer?: string;
   citations?: AskLibraryCitation[];
   reasoning?: AskLibraryReasoning;
+  followUpSuggestions?: string[];
   usedAi?: boolean;
   model?: string | null;
+  threadId?: string | null;
+  threadTitle?: string | null;
+}
+
+interface AskLibraryThreadsResponse extends ApiErrorResponse {
+  threads?: AskLibraryThreadSummary[];
+}
+
+interface AskLibraryThreadResponse extends ApiErrorResponse {
+  thread?: AskLibraryThreadDetail;
 }
 
 interface WorkspaceResponse extends ApiErrorResponse {
@@ -387,11 +416,27 @@ export default function Page() {
   >([]);
   const [askLibraryReasoning, setAskLibraryReasoning] =
     useState<AskLibraryReasoning | null>(null);
+  const [askLibraryFollowUpSuggestions, setAskLibraryFollowUpSuggestions] =
+    useState<string[]>([]);
   const [askLibraryConversation, setAskLibraryConversation] = useState<
     AskLibraryConversationTurn[]
   >([]);
+  const [askLibraryThreadId, setAskLibraryThreadId] = useState<string | null>(
+    null,
+  );
+  const [askLibraryThreads, setAskLibraryThreads] = useState<
+    AskLibraryThreadSummary[]
+  >([]);
   const [askLibraryUsedAi, setAskLibraryUsedAi] = useState(false);
   const [askLibraryModel, setAskLibraryModel] = useState<string | null>(null);
+  const [askScopeWorkspace, setAskScopeWorkspace] = useState(true);
+  const [askScopeCategory, setAskScopeCategory] = useState(true);
+  const [askScopeTags, setAskScopeTags] = useState(false);
+  const [askScopeSelectedTags, setAskScopeSelectedTags] = useState<string[]>([]);
+  const [isAskLibraryThreadsLoading, setIsAskLibraryThreadsLoading] =
+    useState(false);
+  const [isAskLibraryThreadLoading, setIsAskLibraryThreadLoading] =
+    useState(false);
   const [isAskingLibrary, setIsAskingLibrary] = useState(false);
   const [initialLinkDraft, setInitialLinkDraft] =
     useState<PastedLinkDraft | null>(null);
@@ -530,6 +575,12 @@ export default function Page() {
     if (isAskingLibrary) {
       return "Analyzing your library...";
     }
+    if (isAskLibraryThreadLoading) {
+      return "Loading Ask Library thread...";
+    }
+    if (isAskLibraryThreadsLoading) {
+      return "Loading Ask Library threads...";
+    }
     if (isSaving) {
       return "Saving resource...";
     }
@@ -567,6 +618,8 @@ export default function Page() {
   }, [
     authMode,
     deletingResourceId,
+    isAskLibraryThreadLoading,
+    isAskLibraryThreadsLoading,
     isAiPastePreferenceSaving,
     isAskingLibrary,
     isAuthSubmitting,
@@ -1115,6 +1168,30 @@ export default function Page() {
 
     return result;
   }, [resourcesInActiveWorkspace, activeCategory, searchQuery]);
+  const askScopeTagOptions = useMemo(() => {
+    const sourceResources = askScopeWorkspace
+      ? resourcesInActiveWorkspace
+      : resources;
+    const deduped = new Map<string, string>();
+
+    for (const resource of sourceResources) {
+      for (const tag of resource.tags) {
+        const normalized = tag.trim();
+        if (!normalized) {
+          continue;
+        }
+
+        const key = normalized.toLowerCase();
+        if (!deduped.has(key)) {
+          deduped.set(key, normalized);
+        }
+      }
+    }
+
+    return [...deduped.values()].sort((left, right) =>
+      left.localeCompare(right, undefined, { sensitivity: "base" }),
+    );
+  }, [askScopeWorkspace, resources, resourcesInActiveWorkspace]);
   const isWorkspaceSelectionPending =
     isWorkspacesLoading && !activeWorkspaceId && workspaces.length === 0;
   const showResourceSkeleton =
@@ -1419,10 +1496,57 @@ export default function Page() {
   }, [fetchAiPastePreference, sessionUserId]);
 
   useEffect(() => {
+    if (sessionUserId) {
+      return;
+    }
+
+    setAskLibraryThreads([]);
+    setAskLibraryThreadId(null);
+  }, [sessionUserId]);
+
+  useEffect(() => {
     if (activeCategory !== "All" && !categories.includes(activeCategory)) {
       setActiveCategory("All");
     }
   }, [activeCategory, categories]);
+
+  useEffect(() => {
+    if (activeCategory === "All") {
+      setAskScopeCategory(false);
+    }
+  }, [activeCategory]);
+
+  useEffect(() => {
+    if (!askScopeTags) {
+      setAskScopeSelectedTags([]);
+    }
+  }, [askScopeTags]);
+
+  useEffect(() => {
+    if (askScopeTagOptions.length === 0) {
+      setAskScopeSelectedTags([]);
+      return;
+    }
+
+    const allowedTags = new Set(
+      askScopeTagOptions.map((tag) => tag.toLowerCase()),
+    );
+    setAskScopeSelectedTags((previous) =>
+      previous.filter((tag) => allowedTags.has(tag.toLowerCase())),
+    );
+  }, [askScopeTagOptions]);
+
+  useEffect(() => {
+    setAskLibraryThreadId(null);
+    setAskLibraryThreads([]);
+    setAskLibraryConversation([]);
+    setAskLibraryAnswer(null);
+    setAskLibraryCitations([]);
+    setAskLibraryReasoning(null);
+    setAskLibraryFollowUpSuggestions([]);
+    setAskLibraryUsedAi(false);
+    setAskLibraryModel(null);
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2619,104 +2743,245 @@ export default function Page() {
     }
   }, []);
 
+  const syncAskLibraryFromConversation = useCallback(
+    (conversation: AskLibraryConversationTurn[]) => {
+      const latestAssistantTurn = [...conversation]
+        .reverse()
+        .find((turn) => turn.role === "assistant");
+
+      if (!latestAssistantTurn) {
+        setAskLibraryAnswer(null);
+        setAskLibraryCitations([]);
+        setAskLibraryReasoning(null);
+        setAskLibraryFollowUpSuggestions([]);
+        setAskLibraryUsedAi(false);
+        setAskLibraryModel(null);
+        return;
+      }
+
+      setAskLibraryAnswer(latestAssistantTurn.content);
+      setAskLibraryCitations(latestAssistantTurn.citations ?? []);
+      setAskLibraryReasoning(latestAssistantTurn.reasoning ?? null);
+      setAskLibraryFollowUpSuggestions(
+        latestAssistantTurn.followUpSuggestions ?? [],
+      );
+      setAskLibraryUsedAi(latestAssistantTurn.usedAi === true);
+      setAskLibraryModel(latestAssistantTurn.model ?? null);
+    },
+    [],
+  );
+
+  const fetchAskLibraryThreads = useCallback(async () => {
+    if (!sessionUserId) {
+      setAskLibraryThreads([]);
+      return;
+    }
+
+    setIsAskLibraryThreadsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (activeWorkspaceId) {
+        params.set("workspaceId", activeWorkspaceId);
+      }
+      params.set("limit", "12");
+
+      const response = await fetch(`/api/library/threads?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const payload = await readJson<AskLibraryThreadsResponse>(response);
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to load Ask Library threads.");
+      }
+
+      const threads = payload?.threads ?? [];
+      setAskLibraryThreads(threads);
+      if (
+        askLibraryThreadId &&
+        !threads.some((thread) => thread.id === askLibraryThreadId)
+      ) {
+        setAskLibraryThreadId(null);
+      }
+    } catch (error) {
+      setAskLibraryThreads([]);
+      console.error(
+        "Failed to fetch Ask Library threads:",
+        error instanceof Error ? error.message : error,
+      );
+    } finally {
+      setIsAskLibraryThreadsLoading(false);
+    }
+  }, [activeWorkspaceId, askLibraryThreadId, sessionUserId]);
+
+  const handleAskLibraryLoadThread = useCallback(
+    async (threadId: string) => {
+      if (!sessionUserId) {
+        return;
+      }
+
+      setIsAskLibraryThreadLoading(true);
+      try {
+        const response = await fetch(`/api/library/threads/${threadId}`, {
+          cache: "no-store",
+        });
+        const payload = await readJson<AskLibraryThreadResponse>(response);
+        const thread = payload?.thread;
+        if (!response.ok || !thread) {
+          throw new Error(payload?.error ?? "Failed to load Ask Library thread.");
+        }
+
+        setAskLibraryThreadId(thread.id);
+        setAskLibraryConversation(thread.conversation ?? []);
+        syncAskLibraryFromConversation(thread.conversation ?? []);
+        setAskLibraryQuery("");
+      } catch (error) {
+        toast.error("Thread load failed", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "Could not load Ask Library thread.",
+        });
+      } finally {
+        setIsAskLibraryThreadLoading(false);
+      }
+    },
+    [sessionUserId, syncAskLibraryFromConversation],
+  );
+
   const handleAskLibraryOpen = useCallback(() => {
     if (!askLibraryQuery.trim() && searchQuery.trim()) {
       setAskLibraryQuery(searchQuery.trim());
     }
+    setAskScopeCategory(activeCategory !== "All");
     setAskLibraryOpen(true);
-  }, [askLibraryQuery, searchQuery]);
+  }, [activeCategory, askLibraryQuery, searchQuery]);
+
+  useEffect(() => {
+    if (!askLibraryOpen || !sessionUserId) {
+      return;
+    }
+
+    void fetchAskLibraryThreads();
+  }, [askLibraryOpen, fetchAskLibraryThreads, sessionUserId]);
 
   const handleAskLibraryReset = useCallback(() => {
+    setAskLibraryThreadId(null);
     setAskLibraryConversation([]);
     setAskLibraryAnswer(null);
     setAskLibraryCitations([]);
     setAskLibraryReasoning(null);
+    setAskLibraryFollowUpSuggestions([]);
     setAskLibraryUsedAi(false);
     setAskLibraryModel(null);
     setAskLibraryQuery(searchQuery.trim());
+    setAskScopeSelectedTags([]);
   }, [searchQuery]);
 
-  const handleAskLibrarySubmit = useCallback(async () => {
-    const question = askLibraryQuery.trim();
-    if (question.length < 2) {
-      toast.error("Question too short", {
-        description: "Enter at least 2 characters.",
-      });
-      return;
-    }
-
-    const historyPayload = askLibraryConversation
-      .slice(-ASK_LIBRARY_HISTORY_LIMIT)
-      .map<AskLibraryConversationTurnPayload>((turn) => ({
-        role: turn.role,
-        content: turn.content,
-      }));
-
-    setIsAskingLibrary(true);
-    try {
-      const response = await fetch("/api/library/ask", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question,
-          workspaceId: activeWorkspaceId,
-          category: activeCategory === "All" ? null : activeCategory,
-          useAi: canUseAiFeatures,
-          maxCitations: 5,
-          history: historyPayload,
-        }),
-      });
-      const payload = await readJson<AskLibraryResponse>(response);
-      if (!response.ok || !payload?.answer) {
-        throw new Error(payload?.error ?? "Could not generate an answer.");
+  const handleAskLibrarySubmit = useCallback(
+    async (nextQuestion?: string) => {
+      const question = (nextQuestion ?? askLibraryQuery).trim();
+      if (question.length < 2) {
+        toast.error("Question too short", {
+          description: "Enter at least 2 characters.",
+        });
+        return;
       }
 
-      setAskLibraryAnswer(payload.answer);
-      setAskLibraryCitations(payload.citations ?? []);
-      setAskLibraryReasoning(payload.reasoning ?? null);
-      setAskLibraryUsedAi(payload.usedAi === true);
-      setAskLibraryModel(payload.model ?? null);
-      setAskLibraryConversation((previous) => {
-        const next: AskLibraryConversationTurn[] = [
-          ...previous,
-          {
-            id: createAskLibraryTurnId(),
-            role: "user",
-            content: question,
-          },
-          {
-            id: createAskLibraryTurnId(),
-            role: "assistant",
-            content: payload.answer ?? "",
-            usedAi: payload.usedAi === true,
-            model: payload.model ?? null,
-            citations: payload.citations ?? [],
-            reasoning: payload.reasoning ?? null,
-          },
-        ];
+      const historyPayload = askLibraryConversation
+        .slice(-ASK_LIBRARY_HISTORY_LIMIT)
+        .map<AskLibraryConversationTurnPayload>((turn) => ({
+          role: turn.role,
+          content: turn.content,
+        }));
 
-        return next.slice(-(ASK_LIBRARY_HISTORY_LIMIT * 2));
-      });
-      setAskLibraryQuery("");
-    } catch (error) {
-      toast.error("Ask Library failed", {
-        description:
-          error instanceof Error
-            ? error.message
-            : "Could not answer from your saved library.",
-      });
-    } finally {
-      setIsAskingLibrary(false);
-    }
-  }, [
-    activeCategory,
-    activeWorkspaceId,
-    askLibraryConversation,
-    askLibraryQuery,
-    canUseAiFeatures,
-  ]);
+      setIsAskingLibrary(true);
+      try {
+        const response = await fetch("/api/library/ask", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question,
+            threadId: askLibraryThreadId,
+            workspaceId: activeWorkspaceId,
+            category: activeCategory === "All" ? null : activeCategory,
+            tags: askScopeTags ? askScopeSelectedTags : [],
+            scopeWorkspace: askScopeWorkspace,
+            scopeCategory: askScopeCategory,
+            scopeTags: askScopeTags,
+            useAi: canUseAiFeatures,
+            maxCitations: 5,
+            history: historyPayload,
+          }),
+        });
+        const payload = await readJson<AskLibraryResponse>(response);
+        if (!response.ok || !payload?.answer) {
+          throw new Error(payload?.error ?? "Could not generate an answer.");
+        }
+
+        setAskLibraryAnswer(payload.answer);
+        setAskLibraryCitations(payload.citations ?? []);
+        setAskLibraryReasoning(payload.reasoning ?? null);
+        setAskLibraryFollowUpSuggestions(payload.followUpSuggestions ?? []);
+        setAskLibraryUsedAi(payload.usedAi === true);
+        setAskLibraryModel(payload.model ?? null);
+        if (payload.threadId) {
+          setAskLibraryThreadId(payload.threadId);
+        }
+        setAskLibraryConversation((previous) => {
+          const next: AskLibraryConversationTurn[] = [
+            ...previous,
+            {
+              id: createAskLibraryTurnId(),
+              role: "user",
+              content: question,
+              createdAt: new Date().toISOString(),
+            },
+            {
+              id: createAskLibraryTurnId(),
+              role: "assistant",
+              content: payload.answer ?? "",
+              usedAi: payload.usedAi === true,
+              model: payload.model ?? null,
+              citations: payload.citations ?? [],
+              reasoning: payload.reasoning ?? null,
+              followUpSuggestions: payload.followUpSuggestions ?? [],
+              createdAt: new Date().toISOString(),
+            },
+          ];
+
+          return next.slice(-(ASK_LIBRARY_HISTORY_LIMIT * 2));
+        });
+        setAskLibraryQuery("");
+        if (sessionUserId) {
+          void fetchAskLibraryThreads();
+        }
+      } catch (error) {
+        toast.error("Ask Library failed", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "Could not answer from your saved library.",
+        });
+      } finally {
+        setIsAskingLibrary(false);
+      }
+    },
+    [
+      activeCategory,
+      activeWorkspaceId,
+      askLibraryConversation,
+      askLibraryQuery,
+      askLibraryThreadId,
+      askScopeCategory,
+      askScopeSelectedTags,
+      askScopeTags,
+      askScopeWorkspace,
+      canUseAiFeatures,
+      fetchAskLibraryThreads,
+      sessionUserId,
+    ],
+  );
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -3534,6 +3799,7 @@ export default function Page() {
           setAskLibraryOpen(open);
           if (!open) {
             setIsAskingLibrary(false);
+            setIsAskLibraryThreadLoading(false);
           }
         }}
       >
@@ -3547,6 +3813,42 @@ export default function Page() {
           </DialogHeader>
 
           <div className="space-y-4">
+            {sessionUserId ? (
+              <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Recent threads
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">
+                    {isAskLibraryThreadsLoading ? "Loading..." : `${askLibraryThreads.length} shown`}
+                  </span>
+                </div>
+                {askLibraryThreads.length > 0 ? (
+                  <div className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">
+                    {askLibraryThreads.map((thread) => (
+                      <Button
+                        key={thread.id}
+                        type="button"
+                        variant={askLibraryThreadId === thread.id ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-auto max-w-full px-2 py-1 text-left text-xs"
+                        onClick={() => {
+                          void handleAskLibraryLoadThread(thread.id);
+                        }}
+                        disabled={isAskingLibrary || isAskLibraryThreadLoading}
+                      >
+                        <span className="truncate">{thread.title}</span>
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No saved threads yet in this workspace.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
             <div className="space-y-2">
               <Label htmlFor="ask-library-query">Question</Label>
               <Textarea
@@ -3567,21 +3869,111 @@ export default function Page() {
               </p>
             </div>
 
+            <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Limit scope
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 bg-background/50 px-2 py-1.5">
+                  <span className="text-xs text-foreground">Workspace</span>
+                  <Switch
+                    checked={askScopeWorkspace}
+                    onCheckedChange={setAskScopeWorkspace}
+                    aria-label="Limit Ask Library to current workspace"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 bg-background/50 px-2 py-1.5">
+                  <span className="text-xs text-foreground">Category</span>
+                  <Switch
+                    checked={askScopeCategory}
+                    onCheckedChange={setAskScopeCategory}
+                    disabled={activeCategory === "All"}
+                    aria-label="Limit Ask Library to current category"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 bg-background/50 px-2 py-1.5">
+                  <span className="text-xs text-foreground">Tags</span>
+                  <Switch
+                    checked={askScopeTags}
+                    onCheckedChange={setAskScopeTags}
+                    disabled={askScopeTagOptions.length === 0}
+                    aria-label="Limit Ask Library to selected tags"
+                  />
+                </div>
+              </div>
+              {askScopeTags ? (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground">
+                    Select tags to narrow search scope.
+                  </p>
+                  <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
+                    {askScopeTagOptions.length > 0 ? (
+                      askScopeTagOptions.map((tag) => {
+                        const isSelected = askScopeSelectedTags.some(
+                          (selected) => selected.toLowerCase() === tag.toLowerCase(),
+                        );
+
+                        return (
+                          <Button
+                            key={`ask-scope-tag-${tag}`}
+                            type="button"
+                            variant={isSelected ? "secondary" : "outline"}
+                            size="sm"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={() => {
+                              setAskScopeSelectedTags((previous) => {
+                                const exists = previous.some(
+                                  (selected) =>
+                                    selected.toLowerCase() === tag.toLowerCase(),
+                                );
+                                if (exists) {
+                                  return previous.filter(
+                                    (selected) =>
+                                      selected.toLowerCase() !== tag.toLowerCase(),
+                                  );
+                                }
+                                return [...previous, tag];
+                              });
+                            }}
+                          >
+                            {tag}
+                          </Button>
+                        );
+                      })
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        No tags available in current scope.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <div className="flex items-center justify-between gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleAskLibraryReset}
-                disabled={isAskingLibrary || askLibraryConversation.length === 0}
-              >
-                New thread
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleAskLibraryReset}
+                  disabled={isAskingLibrary || askLibraryConversation.length === 0}
+                >
+                  New thread
+                </Button>
+                {askLibraryThreadId ? (
+                  <span className="max-w-48 truncate text-[11px] text-muted-foreground">
+                    Thread:{" "}
+                    {askLibraryThreads.find((thread) => thread.id === askLibraryThreadId)
+                      ?.title ?? "Saved"}
+                  </span>
+                ) : null}
+              </div>
               <div className="flex gap-2">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setAskLibraryOpen(false)}
-                  disabled={isAskingLibrary}
+                  disabled={isAskingLibrary || isAskLibraryThreadLoading}
                 >
                   Close
                 </Button>
@@ -3590,7 +3982,11 @@ export default function Page() {
                   onClick={() => {
                     void handleAskLibrarySubmit();
                   }}
-                  disabled={isAskingLibrary || askLibraryQuery.trim().length < 2}
+                  disabled={
+                    isAskingLibrary ||
+                    isAskLibraryThreadLoading ||
+                    askLibraryQuery.trim().length < 2
+                  }
                 >
                   {isAskingLibrary
                     ? "Thinking..."
@@ -3651,6 +4047,32 @@ export default function Page() {
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                   {askLibraryAnswer}
                 </p>
+
+                {askLibraryFollowUpSuggestions.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Suggested follow-ups
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {askLibraryFollowUpSuggestions.map((suggestion) => (
+                        <Button
+                          key={`ask-follow-up-${suggestion}`}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-auto whitespace-normal text-left text-xs"
+                          disabled={isAskingLibrary}
+                          onClick={() => {
+                            setAskLibraryQuery(suggestion);
+                            void handleAskLibrarySubmit(suggestion);
+                          }}
+                        >
+                          {suggestion}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {askLibraryReasoning ? (
                   <div className="space-y-2 rounded-md border border-border/70 bg-background/60 p-3">

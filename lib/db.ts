@@ -534,6 +534,45 @@ export async function ensureSchema() {
     `;
 
     await sql`
+      CREATE TABLE IF NOT EXISTS ask_library_threads (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        workspace_id UUID REFERENCES resource_workspaces(id) ON DELETE SET NULL,
+        title TEXT NOT NULL CHECK (char_length(title) <= 120),
+        conversation_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+        last_question TEXT,
+        last_answer TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+
+    await sql`
+      ALTER TABLE ask_library_threads
+      ADD COLUMN IF NOT EXISTS conversation_json JSONB NOT NULL DEFAULT '[]'::jsonb
+    `;
+
+    await sql`
+      ALTER TABLE ask_library_threads
+      ADD COLUMN IF NOT EXISTS last_question TEXT
+    `;
+
+    await sql`
+      ALTER TABLE ask_library_threads
+      ADD COLUMN IF NOT EXISTS last_answer TEXT
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS ask_library_threads_user_id_updated_at_idx
+      ON ask_library_threads (user_id, updated_at DESC)
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS ask_library_threads_workspace_id_updated_at_idx
+      ON ask_library_threads (workspace_id, updated_at DESC)
+    `;
+
+    await sql`
       CREATE TABLE IF NOT EXISTS resource_audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         resource_id UUID NOT NULL REFERENCES resource_cards(id) ON DELETE CASCADE,
