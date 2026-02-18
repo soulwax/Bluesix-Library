@@ -6,15 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-18
+
 ### Added
 
 - New `AI Inbox` workflow for batch URL triage: paste up to 25 URLs, run AI/fallback enrichment, review inline metadata, and import selected links to the active workspace
 - New batch suggestion endpoint `POST /api/links/suggest-batch` with duplicate insight payload per analyzed URL
 - Shared link duplicate analysis utility for exact and near-duplicate detection based on canonical URL and similarity heuristics
 - URL extraction helper for bulk paste input parsing (`extractHttpUrlsFromText`)
+- New AI Inbox `Smart merge` action for exact duplicates: merges selected items into existing cards by enriching tags and appending non-duplicate note context
+- Shared link-item drag payload format for drag-and-drop between the main board and sidebar category targets
+- Sidebar category drop targets (desktop and mobile) for moving dragged link items directly into categories
 
 ### Changed
 
+- Drag interaction now starts from individual link rows instead of entire resource cards
+- Category move flow now accepts link-initiated drops from both board and sidebar targets while preserving optimistic update and rollback behavior
 - Paste-to-modal flow now warns when the pasted URL already exists (or is very similar) in the current workspace
 - Resource save flow now prompts for confirmation when exact/similar duplicates are detected before creating/updating a card
 

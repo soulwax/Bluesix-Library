@@ -44,6 +44,10 @@ function ResourceLinkCompactItem({
   faviconUrl,
   openInSameTab = false,
   onOpen,
+  draggable = false,
+  isDragging = false,
+  onDragStart,
+  onDragEnd,
 }: {
   linkId: string
   label: string
@@ -52,6 +56,10 @@ function ResourceLinkCompactItem({
   faviconUrl?: string | null
   openInSameTab?: boolean
   onOpen?: () => void
+  draggable?: boolean
+  isDragging?: boolean
+  onDragStart?: (event: React.DragEvent<HTMLAnchorElement>) => void
+  onDragEnd?: () => void
 }) {
   const hostname = useMemo(() => hostnameFromUrl(url), [url])
 
@@ -60,17 +68,23 @@ function ResourceLinkCompactItem({
       <TooltipTrigger asChild>
         <a
           href={url}
-          draggable={false}
+          draggable={draggable}
           target={openInSameTab ? "_self" : "_blank"}
           rel={openInSameTab ? undefined : "noopener noreferrer"}
           data-resource-link-id={linkId}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
           onClick={() => onOpen?.()}
           onAuxClick={(event) => {
             if (event.button === 1) {
               onOpen?.()
             }
           }}
-          className="group/link flex items-start gap-2 rounded-md border border-border/70 bg-secondary/20 p-2 transition-colors hover:border-primary/30 hover:bg-secondary/40"
+          className={cn(
+            "group/link flex items-start gap-2 rounded-md border border-border/70 bg-secondary/20 p-2 transition-colors hover:border-primary/30 hover:bg-secondary/40",
+            draggable ? "cursor-grab active:cursor-grabbing" : "",
+          )}
+          style={isDragging ? { opacity: 0.5 } : undefined}
         >
           <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/70 bg-background">
             {faviconUrl ? (
@@ -136,10 +150,19 @@ interface ResourceCardProps {
   isDeleting?: boolean
   canManage?: boolean
   openLinksInSameTab?: boolean
-  draggable?: boolean
-  isDragging?: boolean
-  onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void
-  onDragEnd?: () => void
+  canDragLinks?: boolean
+  draggingLinkId?: string | null
+  onLinkDragStart?: (
+    link: {
+      id: string
+      label: string
+      url: string
+      note?: string | null
+      faviconUrl?: string | null
+    },
+    event: React.DragEvent<HTMLAnchorElement>,
+  ) => void
+  onLinkDragEnd?: () => void
 }
 
 export function ResourceCardItem({
@@ -155,10 +178,10 @@ export function ResourceCardItem({
   isDeleting = false,
   canManage = false,
   openLinksInSameTab = false,
-  draggable = false,
-  isDragging = false,
-  onDragStart,
-  onDragEnd,
+  canDragLinks = false,
+  draggingLinkId = null,
+  onLinkDragStart,
+  onLinkDragEnd,
 }: ResourceCardProps) {
   const [contextLinkId, setContextLinkId] = useState<string | null>(null)
 
@@ -243,17 +266,12 @@ export function ResourceCardItem({
         <div
           className={cn(
             "group flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:shadow-primary/5",
-            draggable ? "cursor-grab active:cursor-grabbing" : "",
           )}
           data-resource-item-id={resource.id}
           data-resource-category-id={categoryId ?? undefined}
           data-resource-order={typeof order === "number" ? order : undefined}
-          draggable={draggable}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
           onContextMenuCapture={handleContextMenuCapture}
           onContextMenu={handleContextMenu}
-          style={isDragging ? { opacity: 0.45 } : undefined}
         >
           <div className="mb-3 flex items-center justify-between">
             <Tooltip>
@@ -336,6 +354,10 @@ export function ResourceCardItem({
                   faviconUrl={link.faviconUrl}
                   openInSameTab={openLinksInSameTab}
                   onOpen={() => trackOpenedLink(link)}
+                  draggable={canDragLinks}
+                  isDragging={draggingLinkId === link.id}
+                  onDragStart={(event) => onLinkDragStart?.(link, event)}
+                  onDragEnd={onLinkDragEnd}
                 />
               </li>
             ))}

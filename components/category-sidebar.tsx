@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback } from "react";
+import {
+  LINK_ITEM_DRAG_MIME,
+  parseLinkItemDragPayload,
+} from "@/lib/link-item-drag";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,6 +73,15 @@ interface CategorySidebarProps {
   onDeleteCategory?: (category: string) => void;
   canPasteIntoCategory?: boolean;
   onPasteIntoCategory?: (category: string) => void;
+  canDropLinkItems?: boolean;
+  onDropLinkItemToCategory?: (input: {
+    itemId: string;
+    linkId: string;
+    sourceCategoryId: string;
+    sourceCategoryName: string;
+    sourceIndex: number;
+    targetCategory: string;
+  }) => void;
   onOpenWorkspaceSettings?: () => void;
   showHeading?: boolean;
   compactHeading?: boolean;
@@ -109,6 +122,8 @@ export function CategorySidebar({
   onDeleteCategory,
   canPasteIntoCategory = false,
   onPasteIntoCategory,
+  canDropLinkItems = false,
+  onDropLinkItemToCategory,
   onOpenWorkspaceSettings,
   showHeading = true,
   compactHeading = false,
@@ -137,6 +152,13 @@ export function CategorySidebar({
     ...categories.filter((category) => category !== "All"),
   ];
   const showLoadingState = isLoading && categories.length === 0;
+  const readDraggedLinkItem = useCallback(
+    (event: React.DragEvent<HTMLElement>) =>
+      parseLinkItemDragPayload(
+        event.dataTransfer.getData(LINK_ITEM_DRAG_MIME),
+      ),
+    [],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -205,6 +227,39 @@ export function CategorySidebar({
                           <button
                             type="button"
                             onClick={() => onCategoryChange(cat)}
+                            onDragOver={(event) => {
+                              if (!canDropLinkItems || cat === "All") {
+                                return;
+                              }
+
+                              const payload = readDraggedLinkItem(event);
+                              if (!payload) {
+                                return;
+                              }
+
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(event) => {
+                              if (!canDropLinkItems || cat === "All") {
+                                return;
+                              }
+
+                              const payload = readDraggedLinkItem(event);
+                              if (!payload) {
+                                return;
+                              }
+
+                              event.preventDefault();
+                              onDropLinkItemToCategory?.({
+                                itemId: payload.itemId,
+                                linkId: payload.linkId,
+                                sourceCategoryId: payload.sourceCategoryId,
+                                sourceCategoryName: payload.sourceCategoryName,
+                                sourceIndex: payload.sourceIndex,
+                                targetCategory: cat,
+                              });
+                            }}
                             aria-current={isActive ? "page" : undefined}
                             className={cn(
                               "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",

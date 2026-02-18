@@ -2,6 +2,10 @@
 
 import { Fragment, useMemo, useState } from "react"
 
+import {
+  LINK_ITEM_DRAG_MIME,
+  serializeLinkItemDragPayload,
+} from "@/lib/link-item-drag"
 import type { ResourceCard } from "@/lib/resources"
 import { cn } from "@/lib/utils"
 import { ResourceCardItem } from "@/components/resource-card"
@@ -34,6 +38,7 @@ export interface ResourceBoardColumn {
 
 export interface ResourceBoardMoveInput {
   itemId: string
+  draggedLinkId: string
   sourceCategoryId: string
   sourceCategoryName: string
   sourceIndex: number
@@ -58,6 +63,7 @@ interface ResourceBoardProps {
 
 interface DragState {
   itemId: string
+  draggedLinkId: string
   sourceCategoryId: string
   sourceCategoryName: string
   sourceIndex: number
@@ -192,6 +198,7 @@ export function ResourceBoard({
 
                     void onMoveItem({
                       itemId: dragState.itemId,
+                      draggedLinkId: dragState.draggedLinkId,
                       sourceCategoryId: dragState.sourceCategoryId,
                       sourceCategoryName: dragState.sourceCategoryName,
                       sourceIndex: dragState.sourceIndex,
@@ -225,18 +232,34 @@ export function ResourceBoard({
                         isDeleting={deletingResourceId === resource.id}
                         canManage={canManageResource(resource)}
                         openLinksInSameTab={openLinksInSameTab}
-                        draggable={canDrag}
-                        isDragging={dragState?.itemId === resource.id}
-                        onDragStart={(event) => {
+                        canDragLinks={canDrag}
+                        draggingLinkId={
+                          dragState?.itemId === resource.id
+                            ? dragState.draggedLinkId
+                            : null
+                        }
+                        onLinkDragStart={(link, event) => {
                           if (!resolvedCategoryId || !canDrag) {
                             event.preventDefault()
                             return
                           }
 
                           event.dataTransfer.effectAllowed = "move"
-                          event.dataTransfer.setData("text/plain", resource.id)
+                          const dragPayload = {
+                            itemId: resource.id,
+                            linkId: link.id,
+                            sourceCategoryId: resolvedCategoryId,
+                            sourceCategoryName: column.name,
+                            sourceIndex: index,
+                          }
+                          event.dataTransfer.setData("text/plain", link.url)
+                          event.dataTransfer.setData(
+                            LINK_ITEM_DRAG_MIME,
+                            serializeLinkItemDragPayload(dragPayload),
+                          )
                           setDragState({
                             itemId: resource.id,
+                            draggedLinkId: link.id,
                             sourceCategoryId: resolvedCategoryId,
                             sourceCategoryName: column.name,
                             sourceIndex: index,
@@ -247,7 +270,7 @@ export function ResourceBoard({
                             index,
                           })
                         }}
-                        onDragEnd={handleDragEnd}
+                        onLinkDragEnd={handleDragEnd}
                       />
 
                       <DropSlot
@@ -282,6 +305,7 @@ export function ResourceBoard({
 
                           void onMoveItem({
                             itemId: dragState.itemId,
+                            draggedLinkId: dragState.draggedLinkId,
                             sourceCategoryId: dragState.sourceCategoryId,
                             sourceCategoryName: dragState.sourceCategoryName,
                             sourceIndex: dragState.sourceIndex,

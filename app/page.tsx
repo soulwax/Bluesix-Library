@@ -540,6 +540,25 @@ function summarizeDuplicateMatches(matches: LinkDuplicateMatch[]): string {
     .join(" | ");
 }
 
+function mergeLinkNotes(existing: string, incoming: string): string {
+  const normalizedExisting = normalizeDraftNote(existing);
+  const normalizedIncoming = normalizeDraftNote(incoming);
+  if (!normalizedIncoming) {
+    return normalizedExisting;
+  }
+  if (!normalizedExisting) {
+    return normalizedIncoming;
+  }
+
+  if (
+    normalizedExisting.toLowerCase().includes(normalizedIncoming.toLowerCase())
+  ) {
+    return normalizedExisting;
+  }
+
+  return normalizeDraftNote(`${normalizedExisting} | ${normalizedIncoming}`);
+}
+
 function snapSidebarWidth(width: number): number {
   return Math.round(width / SIDEBAR_SNAP_GRID) * SIDEBAR_SNAP_GRID;
 }
@@ -658,6 +677,7 @@ export default function Page() {
   const [aiInboxUseAi, setAiInboxUseAi] = useState(true);
   const [isAiInboxAnalyzing, setIsAiInboxAnalyzing] = useState(false);
   const [isAiInboxImporting, setIsAiInboxImporting] = useState(false);
+  const [isAiInboxMerging, setIsAiInboxMerging] = useState(false);
   const [askLibraryOpen, setAskLibraryOpen] = useState(false);
   const [askLibraryQuery, setAskLibraryQuery] = useState("");
   const [askLibraryAnswer, setAskLibraryAnswer] = useState<string | null>(null);
@@ -828,6 +848,9 @@ export default function Page() {
     if (isAiInboxImporting) {
       return "Importing AI inbox links...";
     }
+    if (isAiInboxMerging) {
+      return "Merging duplicate links...";
+    }
     if (isAskingLibrary) {
       return "Analyzing your library...";
     }
@@ -878,6 +901,7 @@ export default function Page() {
     isAskLibraryThreadsLoading,
     isAiInboxAnalyzing,
     isAiInboxImporting,
+    isAiInboxMerging,
     isAiPastePreferenceSaving,
     isAskingLibrary,
     isAuthSubmitting,
@@ -1471,6 +1495,13 @@ export default function Page() {
   }, [askScopeWorkspace, resources, resourcesInActiveWorkspace]);
   const aiInboxSelectedCount = useMemo(
     () => aiInboxItems.filter((item) => item.selected).length,
+    [aiInboxItems],
+  );
+  const aiInboxMergeCandidateCount = useMemo(
+    () =>
+      aiInboxItems.filter(
+        (item) => item.selected && item.exactMatches.length > 0,
+      ).length,
     [aiInboxItems],
   );
   const aiInboxExactMatchCount = useMemo(
@@ -3061,6 +3092,38 @@ export default function Page() {
     },
     [canManageResourceCard, resolveResourceCategoryId],
   );
+  const handleDropLinkItemToSidebarCategory = useCallback(
+    (input: {
+      itemId: string;
+      linkId: string;
+      sourceCategoryId: string;
+      sourceCategoryName: string;
+      sourceIndex: number;
+      targetCategory: string;
+    }) => {
+      const targetCategoryRecord =
+        categoryRecordByLowerName.get(input.targetCategory.toLowerCase()) ??
+        null;
+      if (!targetCategoryRecord) {
+        toast.error("Move failed", {
+          description: `Could not resolve category "${input.targetCategory}".`,
+        });
+        return;
+      }
+
+      void handleMoveResourceItem({
+        itemId: input.itemId,
+        draggedLinkId: input.linkId,
+        sourceCategoryId: input.sourceCategoryId,
+        sourceCategoryName: input.sourceCategoryName,
+        sourceIndex: input.sourceIndex,
+        targetCategoryId: targetCategoryRecord.id,
+        targetCategoryName: targetCategoryRecord.name,
+        targetIndex: Number.MAX_SAFE_INTEGER,
+      });
+    },
+    [categoryRecordByLowerName, handleMoveResourceItem],
+  );
 
   const handleOpenCreateResourceModal = useCallback(() => {
     if (!canManageResources) {
@@ -3347,6 +3410,163 @@ export default function Page() {
     },
     [],
   );
+
+  const handleSmartMergeAiInbox = useCallback(async () => {
+    if (!canManageResources || !activeWorkspaceId) {
+      return;
+    }
+
+    const mergeCandidates = aiInboxItems.filter(
+      (item) => item.selected && item.exactMatches.length > 0,
+    );
+    if (mergeCandidates.length === 0) {
+      toast.error("No duplicate items selected", {
+        description:
+          "Select analyzed items with exact duplicate matches to smart merge.",
+      });
+      return;
+    }
+
+    setIsAiInboxMerging(true);
+    try {
+      const resourceMap = new Map(resources.map((resource) => [resource.id, resource]));
+      const updatedById = new Map<string, ResourceCard>();
+      const mergedItemIds = new Set<string>();
+      let mergedCount = 0;
+      let skippedCount = 0;
+      let failedCount = 0;
+
+      for (const item of mergeCandidates) {
+        const targetMatch = item.exactMatches.find((match) => {
+          const candidate =
+            updatedById.get(match.resourceId) ?? resourceMap.get(match.resourceId);
+          return Boolean(candidate) && canManageResourceCard(candidate);
+        });
+
+        if (!targetMatch) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const targetResource =
+          updatedById.get(targetMatch.resourceId) ??
+          resourceMap.get(targetMatch.resourceId);
+        if (!targetResource) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const normalizedUrl = normalizeHttpUrl(item.url)?.toLowerCase() ?? null;
+        const matchingLinkIndex = targetResource.links.findIndex((link) => {
+          if (link.url === targetMatch.linkUrl) {
+            return true;
+          }
+
+          if (!normalizedUrl) {
+            return false;
+          }
+
+          const existingNormalized = normalizeHttpUrl(link.url)?.toLowerCase() ?? null;
+          return existingNormalized === normalizedUrl;
+        });
+
+        const mergedTags = normalizeDraftTags([
+          ...targetResource.tags,
+          ...item.tags,
+        ]);
+        const mergedLinks =
+          matchingLinkIndex >= 0
+            ? targetResource.links.map((link, index) => {
+                if (index !== matchingLinkIndex) {
+                  return link;
+                }
+
+                const mergedNote = mergeLinkNotes(link.note ?? "", item.note);
+                return {
+                  ...link,
+                  note: mergedNote || undefined,
+                };
+              })
+            : [
+                ...targetResource.links,
+                {
+                  id: `pending-${item.id}`,
+                  url: item.url,
+                  label: normalizeDraftLabel(item.label),
+                  note: normalizeDraftNote(item.note) || undefined,
+                },
+              ];
+
+        const payloadInput: ResourceInput = {
+          workspaceId: targetResource.workspaceId,
+          category: targetResource.category,
+          tags: mergedTags,
+          links: mergedLinks.map((link) => ({
+            url: link.url,
+            label: normalizeDraftLabel(link.label),
+            note: normalizeDraftNote(link.note ?? "") || undefined,
+          })),
+        };
+
+        try {
+          const response = await fetch(`/api/resources/${targetResource.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payloadInput),
+          });
+          const payload = await readJson<ResourceResponse>(response);
+          if (!response.ok || !payload?.resource) {
+            failedCount += 1;
+            continue;
+          }
+
+          updatedById.set(payload.resource.id, payload.resource);
+          resourceMap.set(payload.resource.id, payload.resource);
+          mergedItemIds.add(item.id);
+          mergedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      if (updatedById.size > 0) {
+        setResources((previous) =>
+          previous.map((resource) => updatedById.get(resource.id) ?? resource),
+        );
+        void fetchCategories();
+      }
+
+      if (mergedItemIds.size > 0) {
+        setAiInboxItems((previous) =>
+          previous.filter((item) => !mergedItemIds.has(item.id)),
+        );
+      }
+
+      if (mergedCount > 0) {
+        toast.success("Smart merge complete", {
+          description: `${mergedCount} item(s) merged${skippedCount > 0 ? `, ${skippedCount} skipped.` : ""}${failedCount > 0 ? `, ${failedCount} failed.` : ""}`,
+        });
+      } else {
+        toast.error("Smart merge failed", {
+          description:
+            failedCount > 0
+              ? `All selected merges failed (${failedCount}).`
+              : "No eligible duplicate targets were found.",
+        });
+      }
+    } finally {
+      setIsAiInboxMerging(false);
+    }
+  }, [
+    activeWorkspaceId,
+    aiInboxItems,
+    canManageResourceCard,
+    canManageResources,
+    fetchCategories,
+    resources,
+  ]);
 
   const handleImportAiInbox = useCallback(async () => {
     if (!canManageResources || !activeWorkspaceId) {
@@ -3930,6 +4150,7 @@ export default function Page() {
               isResourcesLoading ||
               isAiInboxAnalyzing ||
               isAiInboxImporting ||
+              isAiInboxMerging ||
               !canManageResources ||
               !activeWorkspaceId
             }
@@ -4098,6 +4319,8 @@ export default function Page() {
               setActiveCategory(category);
               handlePasteIntoCategory(category);
             }}
+            canDropLinkItems={canManageResources && !isSearchActive}
+            onDropLinkItemToCategory={handleDropLinkItemToSidebarCategory}
             onOpenWorkspaceSettings={
               activeWorkspace?.ownerUserId ? handleOpenWorkspaceSettings : undefined
             }
@@ -4194,6 +4417,11 @@ export default function Page() {
                 setActiveCategory(category);
                 setSidebarOpen(false);
                 handlePasteIntoCategory(category);
+              }}
+              canDropLinkItems={canManageResources && !isSearchActive}
+              onDropLinkItemToCategory={(input) => {
+                handleDropLinkItemToSidebarCategory(input);
+                setSidebarOpen(false);
               }}
               showHeading={false}
             />
@@ -4432,6 +4660,7 @@ export default function Page() {
                 !canManageResources ||
                 isAiInboxAnalyzing ||
                 isAiInboxImporting ||
+                isAiInboxMerging ||
                 isResourcesLoading ||
                 !activeWorkspaceId
               }
@@ -4522,7 +4751,7 @@ export default function Page() {
       <Dialog
         open={aiInboxOpen}
         onOpenChange={(open) => {
-          if (isAiInboxAnalyzing || isAiInboxImporting) {
+          if (isAiInboxAnalyzing || isAiInboxImporting || isAiInboxMerging) {
             return;
           }
           setAiInboxOpen(open);
@@ -4546,7 +4775,7 @@ export default function Page() {
                 onChange={(event) => setAiInboxRawInput(event.target.value)}
                 placeholder="Paste one or more URLs (one per line or mixed text)..."
                 rows={6}
-                disabled={isAiInboxAnalyzing || isAiInboxImporting}
+                disabled={isAiInboxAnalyzing || isAiInboxImporting || isAiInboxMerging}
               />
               <p className="text-xs text-muted-foreground">
                 Up to {AI_INBOX_MAX_URLS} URLs per run.
@@ -4563,7 +4792,10 @@ export default function Page() {
                     checked={aiInboxUseAi && canUseAiFeatures}
                     onCheckedChange={(checked) => setAiInboxUseAi(checked)}
                     disabled={
-                      !canUseAiFeatures || isAiInboxAnalyzing || isAiInboxImporting
+                      !canUseAiFeatures ||
+                      isAiInboxAnalyzing ||
+                      isAiInboxImporting ||
+                      isAiInboxMerging
                     }
                     aria-label="Use AI for AI Inbox suggestions"
                   />
@@ -4583,6 +4815,7 @@ export default function Page() {
                   disabled={
                     isAiInboxAnalyzing ||
                     isAiInboxImporting ||
+                    isAiInboxMerging ||
                     aiInboxRawInput.trim().length === 0
                   }
                 >
@@ -4590,10 +4823,26 @@ export default function Page() {
                 </Button>
                 <Button
                   type="button"
+                  variant="outline"
+                  onClick={() => void handleSmartMergeAiInbox()}
+                  disabled={
+                    isAiInboxAnalyzing ||
+                    isAiInboxImporting ||
+                    isAiInboxMerging ||
+                    aiInboxMergeCandidateCount === 0
+                  }
+                >
+                  {isAiInboxMerging
+                    ? "Merging..."
+                    : `Smart merge (${aiInboxMergeCandidateCount})`}
+                </Button>
+                <Button
+                  type="button"
                   onClick={() => void handleImportAiInbox()}
                   disabled={
                     isAiInboxAnalyzing ||
                     isAiInboxImporting ||
+                    isAiInboxMerging ||
                     aiInboxSelectedCount === 0
                   }
                 >
@@ -4640,7 +4889,7 @@ export default function Page() {
                                 selected: event.target.checked,
                               }))
                             }
-                            disabled={isAiInboxImporting}
+                            disabled={isAiInboxImporting || isAiInboxMerging}
                             className="mt-0.5 h-4 w-4 rounded border-border bg-background"
                           />
                           <span className="break-all text-xs text-foreground">
@@ -4681,7 +4930,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Label"
-                          disabled={isAiInboxImporting}
+                          disabled={isAiInboxImporting || isAiInboxMerging}
                         />
                         <Input
                           value={item.category ?? ""}
@@ -4692,7 +4941,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Category"
-                          disabled={isAiInboxImporting}
+                          disabled={isAiInboxImporting || isAiInboxMerging}
                         />
                         <Input
                           value={item.note}
@@ -4703,7 +4952,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Note"
-                          disabled={isAiInboxImporting}
+                          disabled={isAiInboxImporting || isAiInboxMerging}
                           className="sm:col-span-2"
                         />
                         <Input
@@ -4720,7 +4969,7 @@ export default function Page() {
                             }))
                           }
                           placeholder="Tags (comma separated)"
-                          disabled={isAiInboxImporting}
+                          disabled={isAiInboxImporting || isAiInboxMerging}
                           className="sm:col-span-2"
                         />
                       </div>
