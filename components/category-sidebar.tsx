@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -72,6 +73,7 @@ interface CategorySidebarProps {
   headingMeta?: string;
   headingCount?: number;
   roleHint?: string | null;
+  isLoading?: boolean;
 }
 
 function resolveCategoryIcon(category: string): LucideIcon {
@@ -109,6 +111,7 @@ export function CategorySidebar({
   headingMeta,
   headingCount,
   roleHint,
+  isLoading = false,
 }: CategorySidebarProps) {
   const copyText = useCallback(async (value: string, label: string) => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -128,11 +131,12 @@ export function CategorySidebar({
     "All",
     ...categories.filter((category) => category !== "All"),
   ];
+  const showLoadingState = isLoading && categories.length === 0;
 
   return (
     <div className="flex h-full flex-col">
-    <ScrollArea className="flex-1">
-      <div className="flex flex-col gap-1 p-4">
+      <ScrollArea className="flex-1">
+        <div className="flex flex-col gap-1 p-4">
         {showHeading ? (
           <div
             className={cn(
@@ -160,145 +164,158 @@ export function CategorySidebar({
             {roleHint ? <p className="section-title-hint">{roleHint}</p> : null}
           </div>
         ) : null}
-        {categoryItems.map((cat) => {
-          const Icon = resolveCategoryIcon(cat);
-          const isActive = activeCategory === cat;
-          const isEditableByOwner =
-            cat !== "All" && (canEditCategory?.(cat) ?? false);
-          const symbol = categorySymbols[cat];
-          const count =
-            cat === "All"
-              ? Object.values(resourceCounts).reduce((a, b) => a + b, 0)
-              : (resourceCounts[cat] ?? 0);
+        {showLoadingState
+          ? Array.from({ length: 7 }, (_, index) => (
+              <div
+                key={`category-skeleton-${index}`}
+                className="flex items-center gap-3 rounded-lg px-3 py-2"
+              >
+                <Skeleton className="h-4 w-4 shrink-0 rounded-sm" />
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="h-3 w-8 shrink-0 rounded-sm" />
+              </div>
+            ))
+          : categoryItems.map((cat) => {
+              const Icon = resolveCategoryIcon(cat);
+              const isActive = activeCategory === cat;
+              const isEditableByOwner =
+                cat !== "All" && (canEditCategory?.(cat) ?? false);
+              const symbol = categorySymbols[cat];
+              const count =
+                cat === "All"
+                  ? Object.values(resourceCounts).reduce((a, b) => a + b, 0)
+                  : (resourceCounts[cat] ?? 0);
 
-          const tooltipLabel =
-            cat === "All"
-              ? `All categories — ${count} resource${count !== 1 ? "s" : ""}`
-              : `${symbol ? `${symbol} ` : ""}${cat} — ${count} resource${count !== 1 ? "s" : ""}`;
+              const tooltipLabel =
+                cat === "All"
+                  ? `All categories — ${count} resource${count !== 1 ? "s" : ""}`
+                  : `${symbol ? `${symbol} ` : ""}${cat} — ${count} resource${count !== 1 ? "s" : ""}`;
 
-          return (
-            <ContextMenu key={cat}>
-              <ContextMenuTrigger asChild>
-                <div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => onCategoryChange(cat)}
-                        aria-current={isActive ? "page" : undefined}
-                        className={cn(
-                          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                          "hover:bg-secondary hover:text-foreground",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          isActive
-                            ? "bg-primary/10 text-primary"
-                            : "text-muted-foreground",
-                        )}
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        {symbol ? (
-                          <span className="shrink-0 text-sm leading-none">
-                            {symbol}
-                          </span>
-                        ) : null}
-                        <span className="truncate">{cat}</span>
-                        <span
-                          className={cn(
-                            "ml-auto font-mono text-xs tabular-nums",
-                            isActive
-                              ? "text-primary"
-                              : "text-muted-foreground/60",
-                          )}
+              return (
+                <ContextMenu key={cat}>
+                  <ContextMenuTrigger asChild>
+                    <div>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => onCategoryChange(cat)}
+                            aria-current={isActive ? "page" : undefined}
+                            className={cn(
+                              "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                              "hover:bg-secondary hover:text-foreground",
+                              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              isActive
+                                ? "bg-primary/10 text-primary"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            <Icon className="h-4 w-4 shrink-0" />
+                            {symbol ? (
+                              <span className="shrink-0 text-sm leading-none">
+                                {symbol}
+                              </span>
+                            ) : null}
+                            <span className="truncate">{cat}</span>
+                            <span
+                              className={cn(
+                                "ml-auto font-mono text-xs tabular-nums",
+                                isActive
+                                  ? "text-primary"
+                                  : "text-muted-foreground/60",
+                              )}
+                            >
+                              {count}
+                            </span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="right"
+                          className="flex flex-col gap-0.5"
                         >
-                          {count}
-                        </span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="right"
-                      className="flex flex-col gap-0.5"
-                    >
-                      <span className="font-medium">{tooltipLabel}</span>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </ContextMenuTrigger>
+                          <span className="font-medium">{tooltipLabel}</span>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </ContextMenuTrigger>
 
-              <ContextMenuContent className="w-56">
-                <ContextMenuLabel>
-                  {symbol ? `${symbol} ` : ""}
-                  {cat}
-                </ContextMenuLabel>
-                <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => onCategoryChange(cat)}>
-                  View this category
-                </ContextMenuItem>
-                {cat !== "All" ? (
-                  <ContextMenuItem onSelect={() => onCategoryChange("All")}>
-                    View all categories
-                  </ContextMenuItem>
-                ) : null}
-                <ContextMenuItem
-                  onSelect={() =>
-                    void copyText(cat, "Category name copied to clipboard")
-                  }
-                >
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copy category name
-                </ContextMenuItem>
-
-                {canManageCategories ? (
-                  <>
+                  <ContextMenuContent className="w-56">
+                    <ContextMenuLabel>
+                      {symbol ? `${symbol} ` : ""}
+                      {cat}
+                    </ContextMenuLabel>
                     <ContextMenuSeparator />
-                    <ContextMenuItem onSelect={() => onCreateCategory?.()}>
-                      <FolderPlus className="mr-2 h-4 w-4" />
-                      Create category
+                    <ContextMenuItem onSelect={() => onCategoryChange(cat)}>
+                      View this category
                     </ContextMenuItem>
-                    {isEditableByOwner ? (
-                      <ContextMenuItem
-                        onSelect={() => onEditCategorySymbol?.(cat)}
-                      >
-                        <Pencil className="mr-2 h-4 w-4" />
-                        Edit category
-                      </ContextMenuItem>
-                    ) : null}
                     {cat !== "All" ? (
-                      <ContextMenuItem
-                        className="text-destructive focus:text-destructive"
-                        onSelect={() => onDeleteCategory?.(cat)}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete category
+                      <ContextMenuItem onSelect={() => onCategoryChange("All")}>
+                        View all categories
                       </ContextMenuItem>
                     ) : null}
-                  </>
-                ) : null}
-              </ContextMenuContent>
-            </ContextMenu>
-          );
-        })}
-      </div>
-    </ScrollArea>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        void copyText(cat, "Category name copied to clipboard")
+                      }
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      Copy category name
+                    </ContextMenuItem>
 
-    {onOpenWorkspaceSettings ? (
-      <div className="border-t border-border/70 p-3">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={onOpenWorkspaceSettings}
-            >
-              <Settings className="h-3.5 w-3.5" />
-              Collection settings
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Rename or delete this collection</TooltipContent>
-        </Tooltip>
-      </div>
-    ) : null}
+                    {canManageCategories ? (
+                      <>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem onSelect={() => onCreateCategory?.()}>
+                          <FolderPlus className="mr-2 h-4 w-4" />
+                          Create category
+                        </ContextMenuItem>
+                        {isEditableByOwner ? (
+                          <ContextMenuItem
+                            onSelect={() => onEditCategorySymbol?.(cat)}
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit category
+                          </ContextMenuItem>
+                        ) : null}
+                        {cat !== "All" ? (
+                          <ContextMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() => onDeleteCategory?.(cat)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete category
+                          </ContextMenuItem>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </ContextMenuContent>
+                </ContextMenu>
+              );
+            })}
+        </div>
+      </ScrollArea>
+
+      {onOpenWorkspaceSettings ? (
+        <div className="border-t border-border/70 p-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={onOpenWorkspaceSettings}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Collection settings
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              Rename or delete this collection
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
     </div>
   );
 }

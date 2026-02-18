@@ -6,6 +6,7 @@ import type { ResourceWorkspace } from "@/lib/resources";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -25,6 +26,7 @@ interface WorkspaceRailProps {
   showSettingsButton?: boolean;
   resourceCountsByWorkspace?: Record<string, number>;
   orientation?: WorkspaceRailOrientation;
+  isLoading?: boolean;
 }
 
 function workspaceBadge(workspaceName: string): string {
@@ -55,6 +57,7 @@ export function WorkspaceRail({
   showSettingsButton = false,
   resourceCountsByWorkspace = {},
   orientation = "vertical",
+  isLoading = false,
 }: WorkspaceRailProps) {
   const isVertical = orientation === "vertical";
 
@@ -71,6 +74,8 @@ export function WorkspaceRail({
       });
     });
   }, [workspaces]);
+  const showLoadingState = isLoading && sortedWorkspaces.length === 0;
+  const skeletonCount = isVertical ? 5 : 6;
 
   return (
     <div className={cn("flex h-full flex-col", !isVertical ? "w-full" : undefined)}>
@@ -81,40 +86,50 @@ export function WorkspaceRail({
             isVertical ? "h-full flex-col items-center" : "items-center",
           )}
         >
-          {sortedWorkspaces.map((workspace) => {
-            const isActive = workspace.id === activeWorkspaceId;
-            const badge = workspaceBadge(workspace.name);
-            const count = resourceCountsByWorkspace[workspace.id] ?? 0;
-            const isSharedWorkspace = !workspace.ownerUserId;
+          {showLoadingState
+            ? Array.from({ length: skeletonCount }, (_, index) => (
+                <Skeleton
+                  key={`workspace-skeleton-${index}`}
+                  className={cn(
+                    "h-9 w-9 rounded-full",
+                    !isVertical ? "shrink-0" : undefined,
+                  )}
+                />
+              ))
+            : sortedWorkspaces.map((workspace) => {
+                const isActive = workspace.id === activeWorkspaceId;
+                const badge = workspaceBadge(workspace.name);
+                const count = resourceCountsByWorkspace[workspace.id] ?? 0;
+                const isSharedWorkspace = !workspace.ownerUserId;
 
-            return (
-              <Tooltip key={workspace.id}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => onWorkspaceChange(workspace.id)}
-                    aria-current={isActive ? "page" : undefined}
-                    aria-label={workspace.name}
-                    className={cn(
-                      "relative flex h-9 w-9 items-center justify-center overflow-hidden border text-xs font-semibold transition-all",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      isActive
-                        ? "rounded-xl border-primary bg-primary text-primary-foreground shadow-sm"
-                        : "rounded-full border-border bg-secondary text-secondary-foreground hover:rounded-xl hover:bg-accent hover:text-accent-foreground",
-                    )}
-                  >
-                    <span>{badge}</span>
-                    {isSharedWorkspace ? (
-                      <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-card bg-emerald-500" />
-                    ) : null}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side={isVertical ? "right" : "bottom"}>
-                  {workspace.name} - {count} resource{count === 1 ? "" : "s"}
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
+                return (
+                  <Tooltip key={workspace.id}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => onWorkspaceChange(workspace.id)}
+                        aria-current={isActive ? "page" : undefined}
+                        aria-label={workspace.name}
+                        className={cn(
+                          "relative flex h-9 w-9 items-center justify-center overflow-hidden border text-xs font-semibold transition-all",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isActive
+                            ? "rounded-xl border-primary bg-primary text-primary-foreground shadow-sm"
+                            : "rounded-full border-border bg-secondary text-secondary-foreground hover:rounded-xl hover:bg-accent hover:text-accent-foreground",
+                        )}
+                      >
+                        <span>{badge}</span>
+                        {isSharedWorkspace ? (
+                          <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-card bg-emerald-500" />
+                        ) : null}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side={isVertical ? "right" : "bottom"}>
+                      {workspace.name} - {count} resource{count === 1 ? "" : "s"}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
 
           {canCreateWorkspace ? (
             <Tooltip>

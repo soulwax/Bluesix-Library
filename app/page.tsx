@@ -52,6 +52,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -309,7 +310,9 @@ export default function Page() {
   const [editingResource, setEditingResource] = useState<ResourceCard | null>(
     null,
   );
-  const [isLoading, setIsLoading] = useState(true);
+  const [isResourcesLoading, setIsResourcesLoading] = useState(true);
+  const [isCategoriesLoading, setIsCategoriesLoading] = useState(true);
+  const [isWorkspacesLoading, setIsWorkspacesLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [deletingResourceId, setDeletingResourceId] = useState<string | null>(
     null,
@@ -580,6 +583,15 @@ export default function Page() {
 
     return result;
   }, [resourcesInActiveWorkspace, activeCategory, searchQuery]);
+  const isWorkspaceSelectionPending =
+    isWorkspacesLoading && !activeWorkspaceId && workspaces.length === 0;
+  const showResourceSkeleton =
+    !loadError &&
+    filteredResources.length === 0 &&
+    (isResourcesLoading || isWorkspaceSelectionPending);
+  const showResourceLoadError =
+    Boolean(loadError) && !isResourcesLoading && resources.length === 0;
+  const isResourceActionDisabled = isResourcesLoading || !activeWorkspaceId;
 
   const activeCategoryCount =
     activeCategory === "All"
@@ -671,7 +683,7 @@ export default function Page() {
     colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null;
 
   const fetchResources = useCallback(async () => {
-    setIsLoading(true);
+    setIsResourcesLoading(true);
     setLoadError(null);
 
     try {
@@ -693,11 +705,12 @@ export default function Page() {
           : "Failed to load resources. Check the database setup and retry.",
       );
     } finally {
-      setIsLoading(false);
+      setIsResourcesLoading(false);
     }
   }, []);
 
   const fetchCategories = useCallback(async () => {
+    setIsCategoriesLoading(true);
     try {
       const response = await fetch("/api/categories", {
         cache: "no-store",
@@ -717,10 +730,13 @@ export default function Page() {
         "Failed to fetch categories:",
         error instanceof Error ? error.message : error,
       );
+    } finally {
+      setIsCategoriesLoading(false);
     }
   }, []);
 
   const fetchWorkspaces = useCallback(async () => {
+    setIsWorkspacesLoading(true);
     try {
       const response = await fetch("/api/workspaces", {
         cache: "no-store",
@@ -740,6 +756,8 @@ export default function Page() {
         "Failed to fetch workspaces:",
         error instanceof Error ? error.message : error,
       );
+    } finally {
+      setIsWorkspacesLoading(false);
     }
   }, []);
 
@@ -2266,9 +2284,7 @@ export default function Page() {
                   onClick={handleOpenCreateResourceModal}
                   className="gap-2"
                   size="sm"
-                  disabled={
-                    isLoading || Boolean(loadError) || !activeWorkspaceId
-                  }
+                  disabled={isResourceActionDisabled}
                 >
                   <Plus className="h-4 w-4" />
                   <span className="hidden sm:inline">Add Resource</span>
@@ -2302,6 +2318,7 @@ export default function Page() {
           <WorkspaceRail
             workspaces={workspaces}
             activeWorkspaceId={activeWorkspaceId}
+            isLoading={isWorkspacesLoading}
             onWorkspaceChange={(workspaceId) => {
               setActiveWorkspaceId(workspaceId);
               setActiveCategory("All");
@@ -2327,6 +2344,7 @@ export default function Page() {
             categories={categories}
             activeCategory={activeCategory}
             onCategoryChange={setActiveCategory}
+            isLoading={isCategoriesLoading || isWorkspacesLoading}
             resourceCounts={resourceCounts}
             categorySymbols={categorySymbols}
             canManageCategories={canManageCategories}
@@ -2377,6 +2395,7 @@ export default function Page() {
                   workspaces={workspaces}
                   activeWorkspaceId={activeWorkspaceId}
                   orientation="horizontal"
+                  isLoading={isWorkspacesLoading}
                   onWorkspaceChange={(workspaceId) => {
                     setActiveWorkspaceId(workspaceId);
                     setActiveCategory("All");
@@ -2413,6 +2432,7 @@ export default function Page() {
             <CategorySidebar
               categories={categories}
               activeCategory={activeCategory}
+              isLoading={isCategoriesLoading || isWorkspacesLoading}
               onCategoryChange={(category) => {
                 setActiveCategory(category);
                 setSidebarOpen(false);
@@ -2534,14 +2554,29 @@ export default function Page() {
                     : ""}
                 </p>
               </div>
-              {isLoading ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  <p className="text-sm text-muted-foreground">
-                    Loading resources...
-                  </p>
+              {showResourceSkeleton ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {Array.from({ length: 8 }, (_, index) => (
+                    <div
+                      key={`resource-skeleton-${index}`}
+                      className="space-y-4 rounded-xl border border-border/70 bg-card/70 p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <Skeleton className="h-4 w-28" />
+                        <Skeleton className="h-5 w-10 rounded-full" />
+                      </div>
+                      <div className="space-y-2">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-[78%]" />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Skeleton className="h-6 w-20 rounded-full" />
+                        <Skeleton className="h-6 w-16 rounded-full" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ) : loadError ? (
+              ) : showResourceLoadError ? (
                 <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
                   <h2 className="text-lg font-semibold text-foreground">
                     Unable to load resources
@@ -2627,9 +2662,7 @@ export default function Page() {
             {canManageResources ? (
               <>
                 <ContextMenuItem
-                  disabled={
-                    isLoading || Boolean(loadError) || !activeWorkspaceId
-                  }
+                  disabled={isResourceActionDisabled}
                   onSelect={handleOpenCreateResourceModal}
                 >
                   <Plus className="mr-2 h-4 w-4" />
