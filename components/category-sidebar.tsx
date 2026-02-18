@@ -64,7 +64,7 @@ interface CategorySidebarProps {
   canManageCategories?: boolean;
   onCreateCategory?: () => void;
   canEditCategory?: (category: string) => boolean;
-  onEditCategorySymbol?: (category: string) => void;
+  onEditCategory?: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
   onOpenWorkspaceSettings?: () => void;
   showHeading?: boolean;
@@ -102,7 +102,7 @@ export function CategorySidebar({
   canManageCategories = false,
   onCreateCategory,
   canEditCategory,
-  onEditCategorySymbol,
+  onEditCategory,
   onDeleteCategory,
   onOpenWorkspaceSettings,
   showHeading = true,
@@ -261,6 +261,12 @@ export function CategorySidebar({
                       <Copy className="mr-2 h-4 w-4" />
                       Copy category name
                     </ContextMenuItem>
+                    {isEditableByOwner ? (
+                      <ContextMenuItem onSelect={() => onEditCategory?.(cat)}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit Category
+                      </ContextMenuItem>
+                    ) : null}
 
                     {canManageCategories ? (
                       <>
@@ -269,14 +275,6 @@ export function CategorySidebar({
                           <FolderPlus className="mr-2 h-4 w-4" />
                           Create category
                         </ContextMenuItem>
-                        {isEditableByOwner ? (
-                          <ContextMenuItem
-                            onSelect={() => onEditCategorySymbol?.(cat)}
-                          >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit category
-                          </ContextMenuItem>
-                        ) : null}
                         {cat !== "All" ? (
                           <ContextMenuItem
                             className="text-destructive focus:text-destructive"

@@ -5,6 +5,7 @@ import { auth } from "@/auth"
 import { ResourceCategoryNotFoundError } from "@/lib/resource-repository"
 import {
   deleteResourceCategoryService,
+  listResourceCategoriesService,
   updateResourceCategorySymbolService,
 } from "@/lib/resource-service"
 
@@ -76,17 +77,32 @@ async function readRequestJson(request: Request): Promise<unknown> {
   }
 }
 
+async function userOwnsCategory(categoryId: string, userId: string) {
+  const { categories } = await listResourceCategoriesService({
+    userId,
+    includeAllWorkspaces: false,
+  })
+
+  return categories.some(
+    (category) => category.id === categoryId && category.ownerUserId === userId
+  )
+}
+
 export async function PATCH(request: Request, context: RouteContext) {
   try {
     const session = await auth()
     if (!session?.user?.id) {
       return errorResponse("Authentication required.", 401)
     }
-    if (!session.user.isAdmin) {
-      return errorResponse("Admin access required.", 403)
+    const categoryId = await parseCategoryId(context)
+
+    if (
+      !session.user.isAdmin &&
+      !(await userOwnsCategory(categoryId, session.user.id))
+    ) {
+      return errorResponse("Insufficient permissions for editing this category.", 403)
     }
 
-    const categoryId = await parseCategoryId(context)
     const payload = await readRequestJson(request)
     const input = updateCategorySchema.parse(payload)
     const { mode, category } = await updateResourceCategorySymbolService(

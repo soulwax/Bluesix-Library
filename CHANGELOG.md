@@ -34,6 +34,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Import path for route type definitions in `next-env.d.ts`
 - `onlyBuiltDependencies` configuration added for `sharp` in `package.json`
 
+## [0.1.4] - 2026-02-18
+
+### Added
+
+- Owner-only `Edit Category` action in category context menus, including right-click on category cards when not targeting a specific link item
+- Dedicated `Edit Category` customization modal for category settings updates
+
+### Changed
+
+- Replaced prompt-based category symbol editing with modal-based category customization flow
+- Header quick action now uses `Edit Category` terminology for active category customization
+
+### Fixed
+
+- Category update permissions now allow authenticated category owners (not only admins) to save category customization
+
 ## [0.1.3] - 2026-02-17
 
 ### Added

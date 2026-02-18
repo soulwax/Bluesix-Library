@@ -109,6 +109,8 @@ interface ResourceCardProps {
   categorySymbol?: string | null
   onDelete: (id: string) => void
   onEdit: (resource: ResourceCard) => void
+  canEditCategory?: boolean
+  onEditCategory?: (category: string) => void
   isDeleting?: boolean
   canManage?: boolean
   openLinksInSameTab?: boolean
@@ -119,6 +121,8 @@ export function ResourceCardItem({
   categorySymbol,
   onDelete,
   onEdit,
+  canEditCategory = false,
+  onEditCategory,
   isDeleting = false,
   canManage = false,
   openLinksInSameTab = false,
@@ -335,6 +339,14 @@ export function ResourceCardItem({
               <ClipboardCopy className="mr-2 h-4 w-4" />
               Copy category name
             </ContextMenuItem>
+            {canEditCategory ? (
+              <ContextMenuItem
+                onSelect={() => onEditCategory?.(resource.category)}
+              >
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Category
+              </ContextMenuItem>
+            ) : null}
             {canManage ? <ContextMenuSeparator /> : null}
           </>
         )}

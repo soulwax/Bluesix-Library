@@ -327,6 +327,10 @@ export default function Page() {
   const [isResendingVerification, setIsResendingVerification] = useState(false);
   const [createCategoryDialogOpen, setCreateCategoryDialogOpen] =
     useState(false);
+  const [editCategoryDialogOpen, setEditCategoryDialogOpen] = useState(false);
+  const [editingCategoryRecord, setEditingCategoryRecord] =
+    useState<ResourceCategory | null>(null);
+  const [editingCategorySymbol, setEditingCategorySymbol] = useState("");
   const [createWorkspaceDialogOpen, setCreateWorkspaceDialogOpen] =
     useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
@@ -393,6 +397,11 @@ export default function Page() {
     !isCategoryMutating &&
     canManageCategories &&
     Boolean(activeWorkspaceId);
+  const canSubmitCategoryCustomization =
+    Boolean(editingCategoryRecord) &&
+    !isCategoryMutating &&
+    editingCategorySymbol.trim() !==
+      (editingCategoryRecord?.symbol?.trim() ?? "");
   const desktopSidebarMaxWidth = getDesktopSidebarMaxWidth(getViewportWidth());
   const updateSectionPreference = useCallback(
     (key: keyof SectionPreferences, checked: boolean) => {
@@ -679,6 +688,24 @@ export default function Page() {
 
     return categoryRecordByLowerName.get(activeCategory.toLowerCase()) ?? null;
   }, [activeCategory, categoryRecordByLowerName]);
+
+  const canEditCategoryByName = useCallback(
+    (categoryName: string) => {
+      if (!sessionUserId || categoryName === "All") {
+        return false;
+      }
+
+      const categoryRecord =
+        categoryRecordByLowerName.get(categoryName.toLowerCase()) ?? null;
+      if (!categoryRecord?.ownerUserId) {
+        return false;
+      }
+
+      return categoryRecord.ownerUserId === sessionUserId;
+    },
+    [categoryRecordByLowerName, sessionUserId],
+  );
+
   const activeColorScheme =
     colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null;
 
@@ -1298,9 +1325,16 @@ export default function Page() {
     newCategorySymbol,
   ]);
 
-  const handleUpdateCategorySymbolByName = useCallback(
-    async (categoryName: string) => {
-      if (!canManageCategories || categoryName === "All") {
+  const handleOpenEditCategoryDialogByName = useCallback(
+    (categoryName: string) => {
+      if (categoryName === "All") {
+        return;
+      }
+
+      if (!sessionUserId) {
+        toast.error("Authentication required", {
+          description: "Sign in to edit category settings.",
+        });
         return;
       }
 
@@ -1313,58 +1347,77 @@ export default function Page() {
         return;
       }
 
-      const nextSymbol = window.prompt(
-        `Set symbol for "${categoryRecord.name}" (leave empty to clear):`,
-        categoryRecord.symbol ?? "",
-      );
-      if (nextSymbol === null) {
+      if (categoryRecord.ownerUserId !== sessionUserId) {
+        toast.error("Insufficient permissions", {
+          description: "You can only edit categories you own.",
+        });
         return;
       }
 
-      setIsCategoryMutating(true);
-      try {
-        const response = await fetch(`/api/categories/${categoryRecord.id}`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            symbol: nextSymbol.trim() || null,
-          }),
-        });
-        const payload = await readJson<CategoryResponse>(response);
-        if (!response.ok || !payload?.category) {
-          throw new Error(
-            payload?.error ?? "Failed to update category symbol.",
-          );
-        }
-        const updatedCategory = payload.category;
-
-        if (payload.mode) {
-          setDataMode(payload.mode);
-        }
-
-        setCategoryRecords((previous) =>
-          previous.map((category) =>
-            category.id === updatedCategory.id ? updatedCategory : category,
-          ),
-        );
-        toast.success("Category symbol updated", {
-          description: `${updatedCategory.name} now uses ${updatedCategory.symbol || "no symbol"}.`,
-        });
-      } catch (error) {
-        toast.error("Category symbol update failed", {
-          description:
-            error instanceof Error
-              ? error.message
-              : "Could not update category symbol.",
-        });
-      } finally {
-        setIsCategoryMutating(false);
-      }
+      setEditingCategoryRecord(categoryRecord);
+      setEditingCategorySymbol(categoryRecord.symbol ?? "");
+      setEditCategoryDialogOpen(true);
     },
-    [canManageCategories, categoryRecordByLowerName],
+    [categoryRecordByLowerName, sessionUserId],
   );
+
+  const handleSaveCategoryCustomization = useCallback(async () => {
+    if (!editingCategoryRecord) {
+      return;
+    }
+
+    if (!canEditCategoryByName(editingCategoryRecord.name)) {
+      toast.error("Insufficient permissions", {
+        description: "You can only edit categories you own.",
+      });
+      return;
+    }
+
+    setIsCategoryMutating(true);
+    try {
+      const response = await fetch(`/api/categories/${editingCategoryRecord.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          symbol: editingCategorySymbol.trim() || null,
+        }),
+      });
+      const payload = await readJson<CategoryResponse>(response);
+      if (!response.ok || !payload?.category) {
+        throw new Error(
+          payload?.error ?? "Failed to update category settings.",
+        );
+      }
+      const updatedCategory = payload.category;
+
+      if (payload.mode) {
+        setDataMode(payload.mode);
+      }
+
+      setCategoryRecords((previous) =>
+        previous.map((category) =>
+          category.id === updatedCategory.id ? updatedCategory : category,
+        ),
+      );
+      setEditingCategoryRecord(updatedCategory);
+      setEditingCategorySymbol(updatedCategory.symbol ?? "");
+      setEditCategoryDialogOpen(false);
+      toast.success("Category updated", {
+        description: `${updatedCategory.name} now uses ${updatedCategory.symbol || "no symbol"}.`,
+      });
+    } catch (error) {
+      toast.error("Category update failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not update category settings.",
+      });
+    } finally {
+      setIsCategoryMutating(false);
+    }
+  }, [canEditCategoryByName, editingCategoryRecord, editingCategorySymbol]);
 
   const handleDeleteCategoryByName = useCallback(
     async (categoryName: string) => {
@@ -1458,13 +1511,13 @@ export default function Page() {
     [canManageCategories, categoryRecordByLowerName, fetchCategories],
   );
 
-  const handleUpdateActiveCategorySymbol = useCallback(async () => {
+  const handleUpdateActiveCategorySymbol = useCallback(() => {
     if (activeCategory === "All") {
       return;
     }
 
-    await handleUpdateCategorySymbolByName(activeCategory);
-  }, [activeCategory, handleUpdateCategorySymbolByName]);
+    handleOpenEditCategoryDialogByName(activeCategory);
+  }, [activeCategory, handleOpenEditCategoryDialogByName]);
 
   const handleDeleteActiveCategory = useCallback(async () => {
     if (activeCategory === "All") {
@@ -2249,13 +2302,11 @@ export default function Page() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => void handleUpdateActiveCategorySymbol()}
+                  onClick={handleUpdateActiveCategorySymbol}
                   disabled={isCategoryMutating}
                 >
-                  <span className="hidden sm:inline">
-                    {activeCategoryRecord.symbol ? "Edit Symbol" : "Set Symbol"}
-                  </span>
-                  <span className="sm:hidden">Symbol</span>
+                  <span className="hidden sm:inline">Edit Category</span>
+                  <span className="sm:hidden">Category</span>
                 </Button>
               ) : null}
               {canManageCategories &&
@@ -2349,9 +2400,8 @@ export default function Page() {
             categorySymbols={categorySymbols}
             canManageCategories={canManageCategories}
             onCreateCategory={handleOpenCreateCategoryDialog}
-            onEditCategorySymbol={(category) => {
-              void handleUpdateCategorySymbolByName(category);
-            }}
+            canEditCategory={canEditCategoryByName}
+            onEditCategory={handleOpenEditCategoryDialogByName}
             onDeleteCategory={(category) => {
               void handleDeleteCategoryByName(category);
             }}
@@ -2441,9 +2491,8 @@ export default function Page() {
               categorySymbols={categorySymbols}
               canManageCategories={canManageCategories}
               onCreateCategory={handleOpenCreateCategoryDialog}
-              onEditCategorySymbol={(category) => {
-                void handleUpdateCategorySymbolByName(category);
-              }}
+              canEditCategory={canEditCategoryByName}
+              onEditCategory={handleOpenEditCategoryDialogByName}
               onDeleteCategory={(category) => {
                 void handleDeleteCategoryByName(category);
               }}
@@ -2647,6 +2696,8 @@ export default function Page() {
                       categorySymbol={categorySymbols[resource.category]}
                       onDelete={handleDelete}
                       onEdit={handleEdit}
+                      canEditCategory={canEditCategoryByName(resource.category)}
+                      onEditCategory={handleOpenEditCategoryDialogByName}
                       isDeleting={deletingResourceId === resource.id}
                       canManage={canManageResourceCard(resource)}
                       openLinksInSameTab={generalSettings.openLinksInSameTab}
@@ -3041,6 +3092,55 @@ export default function Page() {
             disabled={!canSubmitCategory}
           >
             {isCategoryMutating ? "Creating..." : "Create Category"}
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editCategoryDialogOpen}
+        onOpenChange={(open) => {
+          setEditCategoryDialogOpen(open);
+          if (!open) {
+            setEditingCategoryRecord(null);
+            setEditingCategorySymbol("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Category</DialogTitle>
+            <DialogDescription>
+              Customize this category for <strong>{workspaceDisplayName}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="edit-category-name">Name</Label>
+            <Input
+              id="edit-category-name"
+              value={editingCategoryRecord?.name ?? ""}
+              disabled
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="edit-category-symbol">Symbol (optional)</Label>
+            <Input
+              id="edit-category-symbol"
+              value={editingCategorySymbol}
+              onChange={(event) => setEditingCategorySymbol(event.target.value)}
+              placeholder="e.g. 🦀"
+              maxLength={16}
+              disabled={isCategoryMutating || !editingCategoryRecord}
+            />
+          </div>
+
+          <Button
+            type="button"
+            onClick={() => void handleSaveCategoryCustomization()}
+            disabled={!canSubmitCategoryCustomization}
+          >
+            {isCategoryMutating ? "Saving..." : "Save Category"}
           </Button>
         </DialogContent>
       </Dialog>
