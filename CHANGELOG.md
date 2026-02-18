@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-02-18
+
+### Added
+
+- `Ask Your Library` API endpoint (`POST /api/library/ask`) with scoped retrieval and citation output
+- New server-side library QA service for ranked matching, citation extraction, and deterministic fallback answers
+- `Ask Library` UI flow: header action, context-menu shortcut, and dialog with cited result links
+
+### Changed
+
+- `Ask Library` now uses AI-assisted answering (when enabled and authenticated) with automatic fallback to rule-based summaries
+- AI link suggestion pipeline now carries suggested categories and tags into add-resource prefill state and modal initialization
+
+### Fixed
+
+- Library Q&A now remains functional even when AI generation fails, by returning citation-backed deterministic answers instead of hard-failing
+
+## [0.1.9] - 2026-02-18
+
+### Added
+
+- Admin dashboard `User Management` section with an in-panel `Promote to Admin` action for FirstAdmin users
+- AI link suggestion responses now include category and tag suggestions, with paste-to-modal prefill support
+
+### Changed
+
+- Removed `Promote Admin` controls from the main library header and quick actions; promotion is now available only in the admin dashboard
+- AI link suggestion requests now pass existing category hints to improve categorization relevance
+- Added a global activity status pill for long-running UI actions (for example paste processing and library refresh)
+
+### Fixed
+
+- Prevented duplicate clipboard paste actions while a paste flow is already running
+- Prevented overlapping library refresh requests from being triggered concurrently
+
 ## [0.1.8] - 2026-02-18
 
 ### Changed

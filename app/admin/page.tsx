@@ -52,6 +52,7 @@ import {
   Search,
   Tag,
   Trash2,
+  UserPlus,
 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 
@@ -75,6 +76,15 @@ interface AuditLogsResponse extends ApiErrorResponse {
   logs?: ResourceAuditLogEntry[]
 }
 
+interface PromoteAdminResponse extends ApiErrorResponse {
+  user?: {
+    id: string
+    email: string
+    isAdmin: boolean
+    isFirstAdmin: boolean
+  }
+}
+
 type StatusFilter = "all" | "active" | "archived"
 type SortOption =
   | "category-asc"
@@ -85,7 +95,7 @@ type SortOption =
   | "created-oldest"
   | "archived-newest"
   | "archived-oldest"
-type AdminSection = "overview" | "resources" | "audit"
+type AdminSection = "overview" | "users" | "resources" | "audit"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 const AUDIT_PAGE_SIZE = 15
@@ -179,8 +189,13 @@ export default function AdminPage() {
   const [auditPage, setAuditPage] = useState(1)
   const [expandedResourceIds, setExpandedResourceIds] = useState<Set<string>>(new Set())
   const [activeSection, setActiveSection] = useState<AdminSection>("overview")
+  const [promoteIdentifier, setPromoteIdentifier] = useState("")
+  const [isPromotingAdmin, setIsPromotingAdmin] = useState(false)
 
   const isAdmin = Boolean(session?.user?.isAdmin)
+  const isFirstAdmin = Boolean(session?.user?.isFirstAdmin)
+  const canSubmitPromote =
+    isFirstAdmin && promoteIdentifier.trim().length > 0 && !isPromotingAdmin
 
   const resourcesById = useMemo(
     () => new Map(resources.map((r) => [r.id, r])),
@@ -450,6 +465,39 @@ export default function AdminPage() {
     }
   }, [actionResourceId, fetchAuditLogs, isBulkActing, requestRestore, selectedArchivedIds])
 
+  const handlePromoteAdmin = useCallback(async () => {
+    if (!isFirstAdmin || !canSubmitPromote) return
+
+    setIsPromotingAdmin(true)
+    try {
+      const response = await fetch("/api/auth/admins", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          identifier: promoteIdentifier.trim(),
+        }),
+      })
+      const payload = await readJson<PromoteAdminResponse>(response)
+      if (!response.ok || !payload?.user) {
+        throw new Error(payload?.error ?? "Failed to promote admin.")
+      }
+
+      setPromoteIdentifier("")
+      toast.success("Admin promoted", {
+        description: `${payload.user.email} can now manage resources.`,
+      })
+    } catch (error) {
+      toast.error("Promotion failed", {
+        description:
+          error instanceof Error ? error.message : "Could not promote this user.",
+      })
+    } finally {
+      setIsPromotingAdmin(false)
+    }
+  }, [canSubmitPromote, isFirstAdmin, promoteIdentifier])
+
   const togglePageSelection = useCallback(
     (checked: boolean) => {
       setSelectedResourceIds((prev) => {
@@ -513,6 +561,7 @@ export default function AdminPage() {
 
   const navItems: { id: AdminSection; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
+    { id: "users", label: "User Management", icon: <UserPlus className="h-4 w-4" /> },
     { id: "resources", label: "Resources", icon: <List className="h-4 w-4" />, count: totalResources },
     { id: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" />, count: auditLogs.length },
   ]
@@ -688,6 +737,57 @@ export default function AdminPage() {
                   </CardContent>
                 </Card>
               )}
+            </div>
+          )}
+
+          {/* ── USER MANAGEMENT ─────────────────────────────────────── */}
+          {activeSection === "users" && (
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-lg font-semibold">User Management</h2>
+                <p className="text-sm text-muted-foreground">
+                  Promote existing users who have already signed in.
+                </p>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Promote to Admin</CardTitle>
+                  <CardDescription>
+                    Enter an email or username to grant admin access.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <form
+                    className="flex flex-col gap-2 sm:flex-row"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      void handlePromoteAdmin()
+                    }}
+                  >
+                    <Input
+                      value={promoteIdentifier}
+                      onChange={(event) => setPromoteIdentifier(event.target.value)}
+                      placeholder="user@example.com"
+                      aria-label="Email or username"
+                      disabled={!isFirstAdmin || isPromotingAdmin}
+                    />
+                    <Button
+                      type="submit"
+                      className="sm:w-auto"
+                      disabled={!canSubmitPromote}
+                    >
+                      {isPromotingAdmin ? "Promoting..." : "Promote to Admin"}
+                    </Button>
+                  </form>
+
+                  <p className="text-xs text-muted-foreground">
+                    {isFirstAdmin
+                      ? "FirstAdmin can grant admin access to existing users."
+                      : "Only FirstAdmin can promote admins."}
+                  </p>
+                </CardContent>
+              </Card>
             </div>
           )}
 

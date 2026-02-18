@@ -2,10 +2,15 @@ export interface PastedLinkDraft {
   url: string
   label: string
   note: string
+  category?: string | null
+  tags?: string[]
 }
 
 const MAX_LABEL_LENGTH = 120
 const MAX_NOTE_LENGTH = 280
+const MAX_CATEGORY_LENGTH = 80
+const MAX_TAG_LENGTH = 40
+const MAX_TAG_COUNT = 24
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim()
@@ -96,4 +101,35 @@ export function normalizeDraftLabel(value: string): string {
 
 export function normalizeDraftNote(value: string): string {
   return truncate(normalizeWhitespace(value), MAX_NOTE_LENGTH)
+}
+
+export function normalizeDraftCategory(value: string): string | null {
+  const normalized = truncate(normalizeWhitespace(value), MAX_CATEGORY_LENGTH)
+  return normalized || null
+}
+
+export function normalizeDraftTags(values: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const normalized: string[] = []
+
+  for (const value of values) {
+    const item = truncate(normalizeWhitespace(value), MAX_TAG_LENGTH)
+    if (!item) {
+      continue
+    }
+
+    const key = item.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    normalized.push(item)
+
+    if (normalized.length >= MAX_TAG_COUNT) {
+      break
+    }
+  }
+
+  return normalized
 }

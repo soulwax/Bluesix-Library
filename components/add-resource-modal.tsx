@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import type { PastedLinkDraft } from "@/lib/link-paste"
+import { normalizeDraftTags, type PastedLinkDraft } from "@/lib/link-paste"
 import { DEFAULT_CATEGORY_SUGGESTIONS } from "@/lib/resources"
 import type { ResourceCard, ResourceInput } from "@/lib/resources"
 import {
@@ -32,6 +32,7 @@ interface AddResourceModalProps {
   editingResource?: ResourceCard | null
   initialLink?: PastedLinkDraft | null
   initialCategory?: string | null
+  initialTags?: string[] | null
   isSaving?: boolean
   categorySuggestions?: string[]
 }
@@ -43,6 +44,7 @@ export function AddResourceModal({
   editingResource,
   initialLink,
   initialCategory,
+  initialTags,
   isSaving = false,
   categorySuggestions = [],
 }: AddResourceModalProps) {
@@ -81,6 +83,7 @@ export function AddResourceModal({
       if (preparedCategory) {
         setCategoryInput(preparedCategory)
       }
+      setTags(normalizeDraftTags(initialTags ?? []))
       if (initialLink?.url.trim()) {
         setLinks([
           {
@@ -104,7 +107,7 @@ export function AddResourceModal({
     )
     setTags([...(editingResource.tags ?? [])])
     setTagDraft("")
-  }, [editingResource, initialCategory, initialLink, resetForm])
+  }, [editingResource, initialCategory, initialLink, initialTags, resetForm])
 
   const handleOpenChange = (nextOpen: boolean) => {
     onOpenChange(nextOpen)

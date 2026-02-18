@@ -13,6 +13,7 @@ export const runtime = "nodejs"
 
 const requestSchema = z.object({
   url: z.string().trim().min(1).max(2048),
+  categories: z.array(z.string().trim().min(1).max(80)).max(200).optional(),
 })
 
 function errorResponse(message: string, status: number) {
@@ -58,12 +59,15 @@ export async function POST(request: Request) {
 
     const suggestion = await suggestLinkDetailsFromUrl({
       url: normalizedUrl,
+      categories: input.categories,
     })
 
     return NextResponse.json({
       url: normalizedUrl,
       label: suggestion.label,
       note: suggestion.note,
+      category: suggestion.category,
+      tags: suggestion.tags,
       model: suggestion.model,
     })
   } catch (error) {

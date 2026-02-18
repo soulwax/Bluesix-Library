@@ -2,8 +2,10 @@ import "server-only"
 
 import {
   buildLinkDraftFromUrl,
+  normalizeDraftCategory,
   normalizeDraftLabel,
   normalizeDraftNote,
+  normalizeDraftTags,
 } from "@/lib/link-paste"
 
 const PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
@@ -18,6 +20,7 @@ export class MissingPerplexityApiKeyError extends Error {
 
 interface SuggestLinkDetailsInput {
   url: string
+  categories?: string[]
 }
 
 function getPerplexityApiKey(): string {
@@ -70,10 +73,12 @@ function extractAssistantText(payload: unknown): string {
 function parseSuggestionFromText(text: string): {
   label: string | null
   note: string | null
+  category: string | null
+  tags: string[]
 } {
   const trimmed = text.trim()
   if (!trimmed) {
-    return { label: null, note: null }
+    return { label: null, note: null, category: null, tags: [] }
   }
 
   try {
@@ -81,6 +86,8 @@ function parseSuggestionFromText(text: string): {
       label?: unknown
       note?: unknown
       description?: unknown
+      category?: unknown
+      tags?: unknown
     }
     const label =
       typeof parsed.label === "string" ? normalizeDraftLabel(parsed.label) : null
@@ -90,30 +97,71 @@ function parseSuggestionFromText(text: string): {
         : typeof parsed.description === "string"
           ? parsed.description
           : null
+    const category =
+      typeof parsed.category === "string"
+        ? normalizeDraftCategory(parsed.category)
+        : null
+    const tags = normalizeDraftTags(
+      Array.isArray(parsed.tags)
+        ? parsed.tags.filter((item): item is string => typeof item === "string")
+        : typeof parsed.tags === "string"
+          ? parsed.tags
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean)
+          : []
+    )
 
     return {
       label,
       note: noteValue ? normalizeDraftNote(noteValue) : null,
+      category,
+      tags,
     }
   } catch {
     const labelMatch = trimmed.match(/"label"\s*:\s*"([^"]+)"/i)
     const noteMatch = trimmed.match(
       /"(?:note|description)"\s*:\s*"([^"]+)"/i
     )
+    const categoryMatch = trimmed.match(/"category"\s*:\s*"([^"]+)"/i)
+    const tagsMatch = trimmed.match(/"tags"\s*:\s*\[([^\]]*)\]/i)
+
+    const tags =
+      tagsMatch?.[1]
+        ?.split(",")
+        .map((item) => item.replace(/^["'\s]+|["'\s]+$/g, ""))
+        .filter(Boolean) ?? []
 
     return {
       label: labelMatch?.[1] ? normalizeDraftLabel(labelMatch[1]) : null,
       note: noteMatch?.[1] ? normalizeDraftNote(noteMatch[1]) : null,
+      category: categoryMatch?.[1]
+        ? normalizeDraftCategory(categoryMatch[1])
+        : null,
+      tags: normalizeDraftTags(tags),
     }
   }
 }
 
 export async function suggestLinkDetailsFromUrl(
   input: SuggestLinkDetailsInput
-): Promise<{ label: string; note: string; model: string }> {
+): Promise<{
+  label: string
+  note: string
+  category: string | null
+  tags: string[]
+  model: string
+}> {
   const apiKey = getPerplexityApiKey()
   const fallback = buildLinkDraftFromUrl(input.url)
   const model = DEFAULT_PERPLEXITY_MODEL
+  const categoryHints = normalizeDraftTags(
+    (input.categories ?? []).map((category) => category.trim())
+  )
+  const categoryHintText =
+    categoryHints.length > 0
+      ? `Existing categories: ${categoryHints.join(", ")}`
+      : "No existing categories provided."
 
   const response = await fetch(PERPLEXITY_API_URL, {
     method: "POST",
@@ -129,7 +177,7 @@ export async function suggestLinkDetailsFromUrl(
         {
           role: "system",
           content:
-            "You are a metadata assistant for developer links. Return JSON only: {\"label\":\"...\",\"note\":\"...\"}. Label must be concise and descriptive. Note must be one short sentence.",
+            "You are a metadata assistant for developer links. Return JSON only: {\"label\":\"...\",\"note\":\"...\",\"category\":\"...\",\"tags\":[\"...\"]}. Label: concise. Note: one sentence. Category: 1-3 words. Tags: 1-4 concise tags.",
         },
         {
           role: "user",
@@ -137,6 +185,7 @@ export async function suggestLinkDetailsFromUrl(
             `URL: ${input.url}`,
             `Fallback label: ${fallback.label}`,
             `Fallback note: ${fallback.note || "(empty)"}`,
+            categoryHintText,
             "Use plain text. Avoid quotes, emojis, and marketing language.",
           ].join("\n"),
         },
@@ -158,6 +207,8 @@ export async function suggestLinkDetailsFromUrl(
   return {
     label: parsed.label ?? fallback.label,
     note: parsed.note ?? fallback.note,
+    category: parsed.category,
+    tags: parsed.tags,
     model,
   }
 }

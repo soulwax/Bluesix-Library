@@ -12,8 +12,10 @@ import {
 } from "@/lib/authorization";
 import {
   buildLinkDraftFromUrl,
+  normalizeDraftCategory,
   normalizeDraftLabel,
   normalizeDraftNote,
+  normalizeDraftTags,
   normalizeHttpUrl,
   type PastedLinkDraft,
 } from "@/lib/link-paste";
@@ -47,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -70,6 +73,8 @@ import {
   FolderOpen,
   FolderPlus,
   Github,
+  Loader2,
+  MessageSquareText,
   LogIn,
   LogOut,
   Menu,
@@ -78,7 +83,6 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  ShieldPlus,
   Trash2,
   UserPlus,
   WandSparkles,
@@ -143,7 +147,28 @@ interface LinkSuggestionResponse extends ApiErrorResponse {
   url?: string;
   label?: string;
   note?: string;
+  category?: string;
+  tags?: string[];
   model?: string;
+}
+
+interface AskLibraryCitation {
+  index: number;
+  resourceId: string;
+  category: string;
+  tags: string[];
+  linkUrl: string;
+  linkLabel: string;
+  linkNote: string | null;
+  score: number;
+}
+
+interface AskLibraryResponse extends ApiErrorResponse {
+  question?: string;
+  answer?: string;
+  citations?: AskLibraryCitation[];
+  usedAi?: boolean;
+  model?: string | null;
 }
 
 interface WorkspaceResponse extends ApiErrorResponse {
@@ -161,15 +186,6 @@ interface DeleteCategoryResponse extends ApiErrorResponse {
 interface ResourceResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
   resource?: ResourceCard;
-}
-
-interface PromoteAdminResponse extends ApiErrorResponse {
-  user?: {
-    id: string;
-    email: string;
-    isAdmin: boolean;
-    isFirstAdmin: boolean;
-  };
 }
 
 type AuthMode = "login" | "register";
@@ -333,11 +349,21 @@ export default function Page() {
   const [activeCategory, setActiveCategory] = useState<string | "All">("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [askLibraryOpen, setAskLibraryOpen] = useState(false);
+  const [askLibraryQuery, setAskLibraryQuery] = useState("");
+  const [askLibraryAnswer, setAskLibraryAnswer] = useState<string | null>(null);
+  const [askLibraryCitations, setAskLibraryCitations] = useState<
+    AskLibraryCitation[]
+  >([]);
+  const [askLibraryUsedAi, setAskLibraryUsedAi] = useState(false);
+  const [askLibraryModel, setAskLibraryModel] = useState<string | null>(null);
+  const [isAskingLibrary, setIsAskingLibrary] = useState(false);
   const [initialLinkDraft, setInitialLinkDraft] =
     useState<PastedLinkDraft | null>(null);
   const [initialCategoryDraft, setInitialCategoryDraft] = useState<
     string | null
   >(null);
+  const [initialTagsDraft, setInitialTagsDraft] = useState<string[]>([]);
   const [clipboardUrlForPaste, setClipboardUrlForPaste] = useState<
     string | null
   >(null);
@@ -352,6 +378,7 @@ export default function Page() {
   const [pendingPasteCategory, setPendingPasteCategory] = useState<
     string | null
   >(null);
+  const [pasteFlowActivityCount, setPasteFlowActivityCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopSidebarWidth, setDesktopSidebarWidth] = useState<number>(
     clampDesktopSidebarWidth(DESKTOP_SIDEBAR_DEFAULT_WIDTH),
@@ -394,14 +421,12 @@ export default function Page() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategorySymbol, setNewCategorySymbol] = useState("");
   const [isCategoryMutating, setIsCategoryMutating] = useState(false);
-  const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
-  const [promoteIdentifier, setPromoteIdentifier] = useState("");
-  const [isPromotingAdmin, setIsPromotingAdmin] = useState(false);
   const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [workspaceRenameInput, setWorkspaceRenameInput] = useState("");
   const [isWorkspaceRenaming, setIsWorkspaceRenaming] = useState(false);
   const [isWorkspaceDeleting, setIsWorkspaceDeleting] = useState(false);
+  const [isRefreshingLibrary, setIsRefreshingLibrary] = useState(false);
   const [confirmDeleteWorkspace, setConfirmDeleteWorkspace] = useState(false);
   const [sectionPreferences, setSectionPreferences] =
     useState<SectionPreferences>(DEFAULT_SECTION_PREFERENCES);
@@ -442,8 +467,6 @@ export default function Page() {
   const canManageResources = isAuthenticated && canCreateResources(userRole);
   const canManageCategories = hasAdminAccess(userRole);
   const canSubmitAuth = authEmail.trim().length > 0 && authPassword.length > 0;
-  const canSubmitPromote =
-    promoteIdentifier.trim().length > 0 && !isPromotingAdmin;
   const canSubmitWorkspace =
     canCreateWorkspaces &&
     newWorkspaceName.trim().length > 0 &&
@@ -461,6 +484,68 @@ export default function Page() {
       editingCategorySymbol.trim() !==
         (editingCategoryRecord?.symbol?.trim() ?? ""));
   const canUseAiFeatures = isAuthenticated && generalSettings.aiFeaturesEnabled;
+  const isPasteFlowInProgress = pasteFlowActivityCount > 0;
+  const globalActivityMessage = useMemo(() => {
+    if (isPasteFlowInProgress) {
+      return "Processing pasted URL...";
+    }
+    if (isRefreshingLibrary) {
+      return "Refreshing library...";
+    }
+    if (isAskingLibrary) {
+      return "Analyzing your library...";
+    }
+    if (isSaving) {
+      return "Saving resource...";
+    }
+    if (deletingResourceId) {
+      return "Archiving resource...";
+    }
+    if (isCategoryMutating) {
+      return "Updating category...";
+    }
+    if (isWorkspaceMutating) {
+      return "Updating workspace...";
+    }
+    if (isWorkspaceRenaming) {
+      return "Renaming workspace...";
+    }
+    if (isWorkspaceDeleting) {
+      return "Deleting workspace...";
+    }
+    if (isSuggestingCategoryName) {
+      return "Generating AI category suggestion...";
+    }
+    if (isAuthSubmitting) {
+      return authMode === "register" ? "Creating account..." : "Signing in...";
+    }
+    if (isResendingVerification) {
+      return "Resending verification email...";
+    }
+    if (isAiPastePreferenceSaving) {
+      return "Saving AI paste preference...";
+    }
+    if (isSavingColorScheme) {
+      return "Saving color scheme...";
+    }
+    return null;
+  }, [
+    authMode,
+    deletingResourceId,
+    isAiPastePreferenceSaving,
+    isAskingLibrary,
+    isAuthSubmitting,
+    isCategoryMutating,
+    isPasteFlowInProgress,
+    isRefreshingLibrary,
+    isResendingVerification,
+    isSaving,
+    isSavingColorScheme,
+    isSuggestingCategoryName,
+    isWorkspaceDeleting,
+    isWorkspaceMutating,
+    isWorkspaceRenaming,
+  ]);
   const desktopSidebarMaxWidth = getDesktopSidebarMaxWidth(getViewportWidth());
   const updateSectionPreference = useCallback(
     (key: keyof SectionPreferences, checked: boolean) => {
@@ -577,13 +662,23 @@ export default function Page() {
         return fallback;
       }
 
+      const categoryHints = categoryRecords
+        .filter((category) =>
+          activeWorkspaceId ? category.workspaceId === activeWorkspaceId : true,
+        )
+        .map((category) => category.name)
+        .filter((name) => name.trim().length > 0);
+
       try {
         const response = await fetch("/api/links/suggest-from-url", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ url: fallback.url }),
+          body: JSON.stringify({
+            url: fallback.url,
+            categories: categoryHints,
+          }),
         });
         const payload = await readJson<LinkSuggestionResponse>(response);
         if (!response.ok) {
@@ -596,6 +691,8 @@ export default function Page() {
           url: normalizeHttpUrl(payload?.url ?? "") ?? fallback.url,
           label: normalizeDraftLabel(payload?.label ?? fallback.label),
           note: normalizeDraftNote(payload?.note ?? fallback.note),
+          category: normalizeDraftCategory(payload?.category ?? "") ?? null,
+          tags: normalizeDraftTags(payload?.tags ?? []),
         };
       } catch (error) {
         toast.error("AI paste fallback", {
@@ -607,7 +704,7 @@ export default function Page() {
         return fallback;
       }
     },
-    [],
+    [activeWorkspaceId, categoryRecords],
   );
 
   const openCreateModalFromPastedUrl = useCallback(
@@ -615,7 +712,12 @@ export default function Page() {
       const draft = await buildLinkDraftForPaste(url, useAi);
       setEditingResource(null);
       setInitialLinkDraft(draft);
-      setInitialCategoryDraft(targetCategory?.trim() || null);
+      const resolvedCategory =
+        targetCategory?.trim() ||
+        normalizeDraftCategory(draft.category ?? "") ||
+        null;
+      setInitialCategoryDraft(resolvedCategory);
+      setInitialTagsDraft(normalizeDraftTags(draft.tags ?? []));
       setModalOpen(true);
     },
     [buildLinkDraftForPaste],
@@ -626,60 +728,65 @@ export default function Page() {
       targetCategory?: string | null,
       providedUrl?: string | null,
     ): Promise<void> => {
-      if (!canManageResources) {
-        toast.error("Insufficient permissions", {
-          description: "You do not have access to create resource cards.",
-        });
-        return;
-      }
+      setPasteFlowActivityCount((current) => current + 1);
+      try {
+        if (!canManageResources) {
+          toast.error("Insufficient permissions", {
+            description: "You do not have access to create resource cards.",
+          });
+          return;
+        }
 
-      if (!activeWorkspaceId) {
-        toast.error("Workspace unavailable", {
-          description: "Select a workspace before pasting a link.",
-        });
-        return;
-      }
+        if (!activeWorkspaceId) {
+          toast.error("Workspace unavailable", {
+            description: "Select a workspace before pasting a link.",
+          });
+          return;
+        }
 
-      let pastedUrl =
-        providedUrl ?? clipboardUrlForPaste ?? (await readClipboardUrl());
-      if (!pastedUrl && typeof window !== "undefined") {
-        const manualInput = window.prompt(
-          "Paste an http(s) URL to continue:",
-          "",
-        );
-        pastedUrl = normalizeHttpUrl(manualInput ?? "");
-      }
-      if (!pastedUrl) {
-        toast.error("No valid URL in clipboard", {
-          description: "Copy an http(s) URL first, then try pasting again.",
-        });
-        return;
-      }
+        let pastedUrl =
+          providedUrl ?? clipboardUrlForPaste ?? (await readClipboardUrl());
+        if (!pastedUrl && typeof window !== "undefined") {
+          const manualInput = window.prompt(
+            "Paste an http(s) URL to continue:",
+            "",
+          );
+          pastedUrl = normalizeHttpUrl(manualInput ?? "");
+        }
+        if (!pastedUrl) {
+          toast.error("No valid URL in clipboard", {
+            description: "Copy an http(s) URL first, then try pasting again.",
+          });
+          return;
+        }
 
-      if (canUseAiFeatures) {
-        await openCreateModalFromPastedUrl(pastedUrl, true, targetCategory);
-        return;
-      }
+        if (canUseAiFeatures) {
+          await openCreateModalFromPastedUrl(pastedUrl, true, targetCategory);
+          return;
+        }
 
-      let decision = aiPastePromptDecision;
-      if (decision === null && !isAiPastePreferenceLoading) {
-        decision = await fetchAiPastePreference();
-      }
+        let decision = aiPastePromptDecision;
+        if (decision === null && !isAiPastePreferenceLoading) {
+          decision = await fetchAiPastePreference();
+        }
 
-      if (decision === null && isAuthenticated) {
-        setPendingPasteUrl(pastedUrl);
-        setPendingPasteCategory(targetCategory?.trim() || null);
-        setAiPastePromptOpen(true);
-        return;
-      }
+        if (decision === null && isAuthenticated) {
+          setPendingPasteUrl(pastedUrl);
+          setPendingPasteCategory(targetCategory?.trim() || null);
+          setAiPastePromptOpen(true);
+          return;
+        }
 
-      if (decision === "accepted") {
-        updateGeneralSetting("aiFeaturesEnabled", true);
-        await openCreateModalFromPastedUrl(pastedUrl, true, targetCategory);
-        return;
-      }
+        if (decision === "accepted") {
+          updateGeneralSetting("aiFeaturesEnabled", true);
+          await openCreateModalFromPastedUrl(pastedUrl, true, targetCategory);
+          return;
+        }
 
-      await openCreateModalFromPastedUrl(pastedUrl, false, targetCategory);
+        await openCreateModalFromPastedUrl(pastedUrl, false, targetCategory);
+      } finally {
+        setPasteFlowActivityCount((current) => Math.max(0, current - 1));
+      }
     },
     [
       activeWorkspaceId,
@@ -702,20 +809,25 @@ export default function Page() {
         return;
       }
 
-      const url = pendingPasteUrl;
-      const targetCategory = pendingPasteCategory;
-      await saveAiPastePreference(decision);
-      setAiPastePromptOpen(false);
-      setPendingPasteUrl(null);
-      setPendingPasteCategory(null);
+      setPasteFlowActivityCount((current) => current + 1);
+      try {
+        const url = pendingPasteUrl;
+        const targetCategory = pendingPasteCategory;
+        await saveAiPastePreference(decision);
+        setAiPastePromptOpen(false);
+        setPendingPasteUrl(null);
+        setPendingPasteCategory(null);
 
-      if (decision === "accepted") {
-        updateGeneralSetting("aiFeaturesEnabled", true);
-        await openCreateModalFromPastedUrl(url, true, targetCategory);
-        return;
+        if (decision === "accepted") {
+          updateGeneralSetting("aiFeaturesEnabled", true);
+          await openCreateModalFromPastedUrl(url, true, targetCategory);
+          return;
+        }
+
+        await openCreateModalFromPastedUrl(url, false, targetCategory);
+      } finally {
+        setPasteFlowActivityCount((current) => Math.max(0, current - 1));
       }
-
-      await openCreateModalFromPastedUrl(url, false, targetCategory);
     },
     [
       isAiPastePreferenceSaving,
@@ -2023,46 +2135,6 @@ export default function Page() {
     void signIn("github", { callbackUrl: "/" });
   }, []);
 
-  const handlePromoteAdmin = useCallback(async () => {
-    if (!isFirstAdmin || !canSubmitPromote) {
-      return;
-    }
-
-    setIsPromotingAdmin(true);
-
-    try {
-      const response = await fetch("/api/auth/admins", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          identifier: promoteIdentifier.trim(),
-        }),
-      });
-      const payload = await readJson<PromoteAdminResponse>(response);
-
-      if (!response.ok || !payload?.user) {
-        throw new Error(payload?.error ?? "Failed to promote admin.");
-      }
-
-      setPromoteIdentifier("");
-      setPromoteDialogOpen(false);
-      toast.success("Admin promoted", {
-        description: `${payload.user.email} can now manage resources.`,
-      });
-    } catch (error) {
-      toast.error("Promotion failed", {
-        description:
-          error instanceof Error
-            ? error.message
-            : "Could not promote this user.",
-      });
-    } finally {
-      setIsPromotingAdmin(false);
-    }
-  }, [canSubmitPromote, isFirstAdmin, promoteIdentifier]);
-
   const handleSave = useCallback(
     async (input: ResourceInput) => {
       const isEditing = editingResource !== null;
@@ -2342,6 +2414,7 @@ export default function Page() {
 
       setInitialLinkDraft(null);
       setInitialCategoryDraft(null);
+      setInitialTagsDraft([]);
       setEditingResource(resource);
       setModalOpen(true);
     },
@@ -2365,6 +2438,7 @@ export default function Page() {
 
     setInitialLinkDraft(null);
     setInitialCategoryDraft(null);
+    setInitialTagsDraft([]);
     setEditingResource(null);
     setModalOpen(true);
   }, [activeWorkspaceId, canManageResources]);
@@ -2481,17 +2555,91 @@ export default function Page() {
   }, [activeWorkspace, session?.user?.id]);
 
   const handleRefreshLibrary = useCallback(() => {
-    void Promise.all([fetchResources(), fetchCategories(), fetchWorkspaces()]);
-  }, [fetchCategories, fetchResources, fetchWorkspaces]);
+    if (isRefreshingLibrary) {
+      return;
+    }
+
+    setIsRefreshingLibrary(true);
+    void (async () => {
+      try {
+        await Promise.all([fetchResources(), fetchCategories(), fetchWorkspaces()]);
+      } finally {
+        setIsRefreshingLibrary(false);
+      }
+    })();
+  }, [
+    fetchCategories,
+    fetchResources,
+    fetchWorkspaces,
+    isRefreshingLibrary,
+  ]);
 
   const handleModalOpenChange = useCallback((open: boolean) => {
     setModalOpen(open);
     if (!open) {
       setInitialLinkDraft(null);
       setInitialCategoryDraft(null);
+      setInitialTagsDraft([]);
       setEditingResource(null);
     }
   }, []);
+
+  const handleAskLibraryOpen = useCallback(() => {
+    if (!askLibraryQuery.trim() && searchQuery.trim()) {
+      setAskLibraryQuery(searchQuery.trim());
+    }
+    setAskLibraryOpen(true);
+  }, [askLibraryQuery, searchQuery]);
+
+  const handleAskLibrarySubmit = useCallback(async () => {
+    const question = askLibraryQuery.trim();
+    if (question.length < 2) {
+      toast.error("Question too short", {
+        description: "Enter at least 2 characters.",
+      });
+      return;
+    }
+
+    setIsAskingLibrary(true);
+    try {
+      const response = await fetch("/api/library/ask", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question,
+          workspaceId: activeWorkspaceId,
+          category: activeCategory === "All" ? null : activeCategory,
+          useAi: canUseAiFeatures,
+          maxCitations: 5,
+        }),
+      });
+      const payload = await readJson<AskLibraryResponse>(response);
+      if (!response.ok || !payload?.answer) {
+        throw new Error(payload?.error ?? "Could not generate an answer.");
+      }
+
+      setAskLibraryAnswer(payload.answer);
+      setAskLibraryCitations(payload.citations ?? []);
+      setAskLibraryUsedAi(payload.usedAi === true);
+      setAskLibraryModel(payload.model ?? null);
+    } catch (error) {
+      toast.error("Ask Library failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not answer from your saved library.",
+      });
+    } finally {
+      setIsAskingLibrary(false);
+    }
+  }, [
+    activeCategory,
+    activeWorkspaceId,
+    askLibraryQuery,
+    canUseAiFeatures,
+  ]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -2720,15 +2868,6 @@ export default function Page() {
                         <Button asChild variant="outline" size="sm">
                           <Link href="/admin">Open Admin Panel</Link>
                         </Button>
-                        {isFirstAdmin ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setPromoteDialogOpen(true)}
-                          >
-                            Promote Admin
-                          </Button>
-                        ) : null}
                       </div>
                     </div>
                   ) : (
@@ -2741,22 +2880,22 @@ export default function Page() {
             </PopoverContent>
           </Popover>
 
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAskLibraryOpen}
+            disabled={isAskingLibrary || isResourcesLoading}
+          >
+            <MessageSquareText className="h-4 w-4" />
+            <span className="ml-2 hidden sm:inline">Ask Library</span>
+          </Button>
+
           {sessionStatus === "loading" ? (
             <span className="text-xs text-muted-foreground">
               Checking auth...
             </span>
           ) : isAuthenticated ? (
             <>
-              {isFirstAdmin ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPromoteDialogOpen(true)}
-                >
-                  <ShieldPlus className="h-4 w-4" />
-                  <span className="ml-2 hidden sm:inline">Promote Admin</span>
-                </Button>
-              ) : null}
               {isAdmin ? (
                 <Button asChild variant="outline" size="sm">
                   <Link href="/admin">
@@ -2896,7 +3035,7 @@ export default function Page() {
             onDeleteCategory={(category) => {
               void handleDeleteCategoryByName(category);
             }}
-            canPasteIntoCategory={canManageResources}
+            canPasteIntoCategory={canManageResources && !isPasteFlowInProgress}
             onPasteIntoCategory={(category) => {
               setActiveCategory(category);
               handlePasteIntoCategory(category);
@@ -2992,7 +3131,7 @@ export default function Page() {
               onDeleteCategory={(category) => {
                 void handleDeleteCategoryByName(category);
               }}
-              canPasteIntoCategory={canManageResources}
+              canPasteIntoCategory={canManageResources && !isPasteFlowInProgress}
               onPasteIntoCategory={(category) => {
                 setActiveCategory(category);
                 setSidebarOpen(false);
@@ -3083,16 +3222,6 @@ export default function Page() {
                         <FolderPlus className="h-3.5 w-3.5" />
                         <span className="ml-2">New Category</span>
                       </Button>
-                      {isFirstAdmin ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setPromoteDialogOpen(true)}
-                        >
-                          <ShieldPlus className="h-3.5 w-3.5" />
-                          <span className="ml-2">Promote</span>
-                        </Button>
-                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -3222,7 +3351,7 @@ export default function Page() {
                   Add resource card
                 </ContextMenuItem>
                 <ContextMenuItem
-                  disabled={!activeWorkspaceId}
+                  disabled={!activeWorkspaceId || isPasteFlowInProgress}
                   onSelect={() => {
                     void handlePasteFromClipboard(
                       activeCategory === "All" ? null : activeCategory,
@@ -3243,6 +3372,13 @@ export default function Page() {
                 Create category
               </ContextMenuItem>
             ) : null}
+            <ContextMenuItem
+              disabled={isAskingLibrary || isResourcesLoading}
+              onSelect={handleAskLibraryOpen}
+            >
+              <MessageSquareText className="mr-2 h-4 w-4" />
+              Ask library
+            </ContextMenuItem>
             {canManageResources || canManageCategories ? (
               <ContextMenuSeparator />
             ) : null}
@@ -3311,6 +3447,117 @@ export default function Page() {
             >
               {isAiPastePreferenceSaving ? "Saving..." : "Yes"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={askLibraryOpen}
+        onOpenChange={(open) => {
+          setAskLibraryOpen(open);
+          if (!open) {
+            setIsAskingLibrary(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Ask Your Library</DialogTitle>
+            <DialogDescription>
+              Ask a question about saved resources in this workspace and get an
+              answer with citations.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="ask-library-query">Question</Label>
+              <Textarea
+                id="ask-library-query"
+                value={askLibraryQuery}
+                onChange={(event) => setAskLibraryQuery(event.target.value)}
+                placeholder="e.g. What are our best sources on NextAuth session handling?"
+                rows={3}
+                disabled={isAskingLibrary}
+              />
+              <p className="text-xs text-muted-foreground">
+                {canUseAiFeatures
+                  ? "AI-assisted answering is enabled."
+                  : "AI-assisted answering is off. You will get a deterministic cited summary."}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAskLibraryOpen(false)}
+                disabled={isAskingLibrary}
+              >
+                Close
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  void handleAskLibrarySubmit();
+                }}
+                disabled={isAskingLibrary || askLibraryQuery.trim().length < 2}
+              >
+                {isAskingLibrary ? "Thinking..." : "Ask"}
+              </Button>
+            </div>
+
+            {askLibraryAnswer ? (
+              <div className="space-y-3 rounded-md border border-border/70 bg-card/60 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-foreground">Answer</p>
+                  <span className="text-xs text-muted-foreground">
+                    {askLibraryUsedAi
+                      ? `AI${askLibraryModel ? ` (${askLibraryModel})` : ""}`
+                      : "Rule-based"}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {askLibraryAnswer}
+                </p>
+
+                {askLibraryCitations.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Citations
+                    </p>
+                    <ul className="space-y-1.5">
+                      {askLibraryCitations.map((citation) => (
+                        <li
+                          key={`${citation.resourceId}-${citation.index}`}
+                          className="rounded-md border border-border/70 bg-background/70 p-2"
+                        >
+                          <a
+                            href={citation.linkUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-medium text-primary hover:underline"
+                          >
+                            [{citation.index}] {citation.linkLabel}
+                          </a>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {citation.category}
+                            {citation.tags.length > 0
+                              ? ` • ${citation.tags.join(", ")}`
+                              : ""}
+                          </p>
+                          {citation.linkNote ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {citation.linkNote}
+                            </p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -3873,48 +4120,6 @@ export default function Page() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={promoteDialogOpen}
-        onOpenChange={(open) => {
-          setPromoteDialogOpen(open);
-          if (!open) {
-            setPromoteIdentifier("");
-            setIsPromotingAdmin(false);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Promote Admin</DialogTitle>
-            <DialogDescription>
-              FirstAdmin can grant admin access to existing users.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="promote-identifier">Email or username</Label>
-            <Input
-              id="promote-identifier"
-              value={promoteIdentifier}
-              onChange={(event) => setPromoteIdentifier(event.target.value)}
-              placeholder="user@example.com"
-              disabled={isPromotingAdmin}
-            />
-            <p className="text-xs text-muted-foreground">
-              User must have signed in at least once.
-            </p>
-          </div>
-
-          <Button
-            type="button"
-            onClick={() => void handlePromoteAdmin()}
-            disabled={!canSubmitPromote || !isFirstAdmin}
-          >
-            {isPromotingAdmin ? "Promoting..." : "Promote to Admin"}
-          </Button>
-        </DialogContent>
-      </Dialog>
-
       <AddResourceModal
         open={modalOpen}
         onOpenChange={handleModalOpenChange}
@@ -3922,9 +4127,24 @@ export default function Page() {
         editingResource={editingResource}
         initialLink={initialLinkDraft}
         initialCategory={initialCategoryDraft}
+        initialTags={initialTagsDraft}
         isSaving={isSaving}
         categorySuggestions={categories}
       />
+
+      {globalActivityMessage ? (
+        <div className="pointer-events-none fixed right-4 top-20 z-[80]">
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            className="flex items-center gap-2 rounded-full border border-border/80 bg-card/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-lg backdrop-blur-sm"
+          >
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span>{globalActivityMessage}</span>
+          </div>
+        </div>
+      ) : null}
 
       <Toaster position="bottom-right" theme="dark" />
     </div>
