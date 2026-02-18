@@ -119,6 +119,7 @@ interface ResourceJoinRow {
   resourceCategory: string;
   resourceOwnerUserId: string | null;
   resourceDeletedAt: Date | string | null;
+  resourceCreatedAt: Date | string | null;
   linkId: string | null;
   linkUrl: string | null;
   linkLabel: string | null;
@@ -456,6 +457,7 @@ async function findResourceById(
       resourceCategory: resourceCards.category,
       resourceOwnerUserId: resourceCards.ownerUserId,
       resourceDeletedAt: resourceCards.deletedAt,
+      resourceCreatedAt: resourceCards.createdAt,
       linkId: resourceLinks.id,
       linkUrl: resourceLinks.url,
       linkLabel: resourceLinks.label,

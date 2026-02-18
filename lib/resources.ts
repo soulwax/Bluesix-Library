@@ -14,6 +14,7 @@ export interface ResourceCard {
   tags: string[]
   links: ResourceLink[]
   deletedAt?: string | null
+  createdAt?: string | null
 }
 
 export interface ResourceCategory {
