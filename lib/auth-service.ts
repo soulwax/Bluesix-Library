@@ -164,6 +164,59 @@ async function sendEmailVerificationEmail(
     }
   }
 
+  const expiryHours = EMAIL_VERIFICATION_TTL_MINUTES / 60
+  // Unique per-send ID prevents Gmail from collapsing re-sends into a thread
+  const entityRefId = randomBytes(16).toString("hex")
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Confirm your lib.bluesix account</title>
+</head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;">
+  <!-- Hidden preheader — controls inbox preview text -->
+  <span style="display:none;max-height:0;overflow:hidden;opacity:0;">Confirm your email to activate your lib.bluesix account — link expires in ${expiryHours} hours.</span>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:8px;border:1px solid #e2e8f0;">
+        <tr><td style="padding:32px 40px 0;">
+          <p style="margin:0;font-size:13px;font-weight:600;color:#64748b;letter-spacing:0.06em;text-transform:uppercase;">lib.bluesix</p>
+        </td></tr>
+        <tr><td style="padding:24px 40px 32px;">
+          <h1 style="margin:0 0 16px;font-size:22px;font-weight:700;line-height:1.3;color:#0f172a;">Confirm your email address</h1>
+          <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#334155;">You are one step away from your personal library. Click the button below to confirm your email and activate your account.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
+            <tr><td style="background:#0f172a;border-radius:6px;">
+              <a href="${verificationUrl}" style="display:inline-block;padding:13px 28px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">Confirm email address</a>
+            </td></tr>
+          </table>
+          <p style="margin:0 0 6px;font-size:13px;color:#64748b;">If the button does not work, copy and paste this URL into your browser:</p>
+          <p style="margin:0;font-size:12px;word-break:break-all;"><a href="${verificationUrl}" style="color:#0f172a;">${verificationUrl}</a></p>
+        </td></tr>
+        <tr><td style="padding:0 40px;"><hr style="border:none;border-top:1px solid #e2e8f0;margin:0;"></td></tr>
+        <tr><td style="padding:20px 40px 28px;">
+          <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">This link expires in ${expiryHours} hours. If you did not create a lib.bluesix account, you can safely ignore this email — no account will be created without confirmation.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+  const text = [
+    "lib.bluesix — Confirm your email address",
+    "",
+    "You are one step away from your personal library.",
+    "Click the link below to confirm your email and activate your account:",
+    "",
+    verificationUrl,
+    "",
+    `This link expires in ${expiryHours} hours.`,
+    "If you did not create a lib.bluesix account, you can safely ignore this email.",
+  ].join("\n")
+
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -174,28 +227,21 @@ async function sendEmailVerificationEmail(
       body: JSON.stringify({
         from: fromAddress,
         to: [recipientEmail],
-        subject: "Confirm your email address",
-        text: [
-          "Welcome.",
-          "",
-          "Confirm your email address to activate your account:",
-          verificationUrl,
-          "",
-          `This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.`,
-        ].join("\n"),
-        html: [
-          "<p>Welcome.</p>",
-          "<p>Confirm your email address to activate your account:</p>",
-          `<p><a href="${verificationUrl}">${verificationUrl}</a></p>`,
-          `<p>This link expires in ${EMAIL_VERIFICATION_TTL_MINUTES / 60} hours.</p>`,
-        ].join(""),
+        subject: "Confirm your lib.bluesix account",
+        html,
+        text,
+        headers: {
+          // Prevents Gmail from threading repeated sends together
+          "X-Entity-Ref-ID": entityRefId,
+        },
+        tags: [{ name: "category", value: "email-verification" }],
       }),
     })
 
     if (!response.ok) {
-      const text = await response.text()
+      const responseText = await response.text()
       console.error(
-        `[auth] resend delivery failed (${response.status}) for ${recipientEmail}: ${text || "No response body."}`
+        `[auth] resend delivery failed (${response.status}) for ${recipientEmail}: ${responseText || "No response body."}`
       )
     } else {
       return {
