@@ -152,6 +152,12 @@ interface SectionPreferences {
   adminQuickActions: boolean;
 }
 
+interface GeneralSettingsPreferences {
+  showAccountEmail: boolean;
+  showAccountRole: boolean;
+  showMockModeBadge: boolean;
+}
+
 async function readJson<T>(response: Response): Promise<T | null> {
   try {
     return (await response.json()) as T;
@@ -169,11 +175,17 @@ const DESKTOP_SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_KEYBOARD_STEP = SIDEBAR_SNAP_GRID;
 const FALLBACK_VIEWPORT_WIDTH = 1440;
 const SECTION_PREFERENCES_STORAGE_KEY = "section-preferences";
+const GENERAL_SETTINGS_STORAGE_KEY = "general-settings-preferences";
 const DEFAULT_SECTION_PREFERENCES: SectionPreferences = {
   compactTitles: false,
   showContextLine: true,
   showRoleHints: true,
   adminQuickActions: true,
+};
+const DEFAULT_GENERAL_SETTINGS: GeneralSettingsPreferences = {
+  showAccountEmail: true,
+  showAccountRole: true,
+  showMockModeBadge: true,
 };
 
 function snapSidebarWidth(width: number): number {
@@ -239,6 +251,34 @@ function parseSectionPreferences(
   }
 }
 
+function parseGeneralSettingsPreferences(
+  rawValue: string | null,
+): GeneralSettingsPreferences | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue) as Partial<GeneralSettingsPreferences>;
+    return {
+      showAccountEmail:
+        typeof parsed.showAccountEmail === "boolean"
+          ? parsed.showAccountEmail
+          : DEFAULT_GENERAL_SETTINGS.showAccountEmail,
+      showAccountRole:
+        typeof parsed.showAccountRole === "boolean"
+          ? parsed.showAccountRole
+          : DEFAULT_GENERAL_SETTINGS.showAccountRole,
+      showMockModeBadge:
+        typeof parsed.showMockModeBadge === "boolean"
+          ? parsed.showMockModeBadge
+          : DEFAULT_GENERAL_SETTINGS.showMockModeBadge,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function Page() {
   const { data: session, status: sessionStatus } = useSession();
   const [resources, setResources] = useState<ResourceCard[]>([]);
@@ -288,8 +328,11 @@ export default function Page() {
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
   const [promoteIdentifier, setPromoteIdentifier] = useState("");
   const [isPromotingAdmin, setIsPromotingAdmin] = useState(false);
+  const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false);
   const [sectionPreferences, setSectionPreferences] =
     useState<SectionPreferences>(DEFAULT_SECTION_PREFERENCES);
+  const [generalSettings, setGeneralSettings] =
+    useState<GeneralSettingsPreferences>(DEFAULT_GENERAL_SETTINGS);
   const {
     schemes: colorSchemes,
     currentSchemeIndex,
@@ -340,6 +383,15 @@ export default function Page() {
   const updateSectionPreference = useCallback(
     (key: keyof SectionPreferences, checked: boolean) => {
       setSectionPreferences((previous) => ({
+        ...previous,
+        [key]: checked,
+      }));
+    },
+    [],
+  );
+  const updateGeneralSetting = useCallback(
+    (key: keyof GeneralSettingsPreferences, checked: boolean) => {
+      setGeneralSettings((previous) => ({
         ...previous,
         [key]: checked,
       }));
@@ -745,11 +797,35 @@ export default function Page() {
       return;
     }
 
+    const storedGeneralSettings = parseGeneralSettingsPreferences(
+      window.localStorage.getItem(GENERAL_SETTINGS_STORAGE_KEY),
+    );
+    if (storedGeneralSettings) {
+      setGeneralSettings(storedGeneralSettings);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     window.localStorage.setItem(
       SECTION_PREFERENCES_STORAGE_KEY,
       JSON.stringify(sectionPreferences),
     );
   }, [sectionPreferences]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      GENERAL_SETTINGS_STORAGE_KEY,
+      JSON.stringify(generalSettings),
+    );
+  }, [generalSettings]);
 
   useEffect(() => {
     if (activeCategory !== "All" && !categories.includes(activeCategory)) {
@@ -1790,17 +1866,21 @@ export default function Page() {
             <h1 className="text-base font-semibold leading-tight text-foreground">
               BlueSix
             </h1>
-            {isAuthenticated && session?.user?.email ? (
+            {isAuthenticated &&
+            session?.user?.email &&
+            generalSettings.showAccountEmail ? (
               <span className="inline-flex max-w-56 flex-col rounded-xl border border-border bg-secondary px-2.5 py-1 leading-tight text-secondary-foreground">
                 <span className="truncate text-[11px] font-medium">
                   {session.user.email}
                 </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {roleLabel}
-                </span>
+                {generalSettings.showAccountRole ? (
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {roleLabel}
+                  </span>
+                ) : null}
               </span>
             ) : null}
-            {dataMode === "mock" ? (
+            {dataMode === "mock" && generalSettings.showMockModeBadge ? (
               <span className="rounded-md border border-border bg-secondary/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600">
                 mock mode
               </span>
@@ -2142,6 +2222,8 @@ export default function Page() {
             }}
             canCreateWorkspace={canCreateWorkspaces}
             onCreateWorkspace={handleOpenCreateWorkspaceDialog}
+            showSettingsButton
+            onOpenSettings={() => setGeneralSettingsOpen(true)}
             resourceCountsByWorkspace={workspaceResourceCounts}
           />
         </aside>
@@ -2498,6 +2580,163 @@ export default function Page() {
           </ContextMenuContent>
         </ContextMenu>
       </div>
+
+      <Dialog open={generalSettingsOpen} onOpenChange={setGeneralSettingsOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>General Settings</DialogTitle>
+            <DialogDescription>
+              Account and interface preferences. Changes are saved
+              automatically.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-md border border-border/70 bg-card/50 p-3">
+              <p className="text-xs font-semibold text-foreground">Account</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {isAuthenticated
+                  ? `${session?.user?.email ?? "Signed in"} · ${roleLabel}`
+                  : "Guest session"}
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
+              <p className="text-xs font-semibold text-foreground">
+                Header visibility
+              </p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-foreground">
+                    Show account email
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Display your email in the top header.
+                  </p>
+                </div>
+                <Switch
+                  checked={generalSettings.showAccountEmail}
+                  onCheckedChange={(checked) =>
+                    updateGeneralSetting("showAccountEmail", checked)
+                  }
+                  aria-label="Toggle account email in header"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-foreground">
+                    Show role label
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Show role under your account email.
+                  </p>
+                </div>
+                <Switch
+                  checked={generalSettings.showAccountRole}
+                  onCheckedChange={(checked) =>
+                    updateGeneralSetting("showAccountRole", checked)
+                  }
+                  aria-label="Toggle role label in header"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-foreground">
+                    Show mock mode badge
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Show environment mode in the header.
+                  </p>
+                </div>
+                <Switch
+                  checked={generalSettings.showMockModeBadge}
+                  onCheckedChange={(checked) =>
+                    updateGeneralSetting("showMockModeBadge", checked)
+                  }
+                  aria-label="Toggle mock mode badge"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border/70 bg-card/50 p-3">
+              <p className="text-xs font-semibold text-foreground">
+                Section behavior
+              </p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-foreground">
+                    Compact titles
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Use denser section heading spacing.
+                  </p>
+                </div>
+                <Switch
+                  checked={sectionPreferences.compactTitles}
+                  onCheckedChange={(checked) =>
+                    updateSectionPreference("compactTitles", checked)
+                  }
+                  aria-label="Toggle compact titles"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-foreground">
+                    Context lines
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Show workspace context under section titles.
+                  </p>
+                </div>
+                <Switch
+                  checked={sectionPreferences.showContextLine}
+                  onCheckedChange={(checked) =>
+                    updateSectionPreference("showContextLine", checked)
+                  }
+                  aria-label="Toggle section context lines"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-foreground">
+                    Role hints
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Keep permissions visible inside section headers.
+                  </p>
+                </div>
+                <Switch
+                  checked={sectionPreferences.showRoleHints}
+                  onCheckedChange={(checked) =>
+                    updateSectionPreference("showRoleHints", checked)
+                  }
+                  aria-label="Toggle role hints"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border/70 bg-card/50 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                <span className="truncate font-medium text-foreground">
+                  Theme: {activeColorScheme?.name ?? "Default"}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {currentSchemeIndex + 1}/{colorSchemes.length}
+                </span>
+              </div>
+              <Slider
+                value={[currentSchemeIndex]}
+                min={0}
+                max={Math.max(0, colorSchemes.length - 1)}
+                step={1}
+                onValueChange={handleColorSchemePreview}
+                onValueCommit={handleColorSchemeCommit}
+                aria-label="Color scheme selector"
+              />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={createWorkspaceDialogOpen}
