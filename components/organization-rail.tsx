@@ -14,9 +14,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Plus, Settings } from "lucide-react";
+import { FileText, Github, Plus, Settings } from "lucide-react";
 
 type OrganizationRailOrientation = "vertical" | "horizontal";
+const PROJECT_GITHUB_URL = "https://github.com/soulwax/lib.bluesix.dev";
+const PROJECT_CHANGELOG_URL = `${PROJECT_GITHUB_URL}/blob/main/CHANGELOG.md`;
 
 interface OrganizationRailProps {
   organizations: ResourceOrganization[];
@@ -172,6 +174,57 @@ export function OrganizationRail({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                disableTooltip
+                className={cn(
+                  buttonSizeClass,
+                  buttonRadiusClass,
+                  "border border-border text-muted-foreground transition-all hover:text-foreground",
+                )}
+                aria-label="Open project changelog"
+              >
+                <a
+                  href={PROJECT_CHANGELOG_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                </a>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">View changelog</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                disableTooltip
+                className={cn(
+                  buttonSizeClass,
+                  buttonRadiusClass,
+                  "border border-border text-muted-foreground transition-all hover:text-foreground",
+                  compactMode ? "mt-1" : "mt-1.5",
+                )}
+                aria-label="Open project GitHub repository"
+              >
+                <a
+                  href={PROJECT_GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Github className="h-3.5 w-3.5" />
+                </a>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">View on GitHub</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
                 type="button"
                 variant="ghost"
                 size="icon"
@@ -180,6 +233,7 @@ export function OrganizationRail({
                   buttonSizeClass,
                   buttonRadiusClass,
                   "border border-border text-muted-foreground transition-all hover:text-foreground",
+                  compactMode ? "mt-1" : "mt-1.5",
                 )}
                 onClick={onOpenSettings}
                 aria-label="Open general settings"

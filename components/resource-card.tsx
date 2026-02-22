@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 
 import type { ResourceCard } from "@/lib/resources"
 import { cn } from "@/lib/utils"
@@ -37,6 +37,20 @@ function hostnameFromUrl(url: string): string | null {
   }
 }
 
+function isCardDragBlockedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false
+  }
+
+  return Boolean(
+    target.closest(
+      "a,button,input,select,textarea,option,[role='button'],[contenteditable='true']",
+    ),
+  )
+}
+
+const DRAG_HOLD_SUPPRESS_MS = 140
+
 function ResourceLinkCompactItem({
   linkId,
   label,
@@ -63,6 +77,8 @@ function ResourceLinkCompactItem({
   onDragEnd?: () => void
 }) {
   const hostname = useMemo(() => hostnameFromUrl(url), [url])
+  const pointerDownStartedAtRef = useRef<number | null>(null)
+  const suppressNextClickRef = useRef(false)
 
   return (
     <Tooltip>
@@ -73,10 +89,59 @@ function ResourceLinkCompactItem({
           target={openInSameTab ? "_self" : "_blank"}
           rel={openInSameTab ? undefined : "noopener noreferrer"}
           data-resource-link-id={linkId}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          onClick={() => onOpen?.()}
+          onPointerDown={(event) => {
+            if (!draggable || event.button !== 0) {
+              return
+            }
+            pointerDownStartedAtRef.current = Date.now()
+          }}
+          onPointerUp={() => {
+            if (!draggable) {
+              return
+            }
+
+            const startedAt = pointerDownStartedAtRef.current
+            pointerDownStartedAtRef.current = null
+            if (
+              startedAt !== null &&
+              Date.now() - startedAt >= DRAG_HOLD_SUPPRESS_MS
+            ) {
+              suppressNextClickRef.current = true
+            }
+          }}
+          onPointerCancel={() => {
+            pointerDownStartedAtRef.current = null
+          }}
+          onDragStart={(event) => {
+            pointerDownStartedAtRef.current = null
+            suppressNextClickRef.current = true
+            event.stopPropagation()
+            onDragStart?.(event)
+          }}
+          onDragEnd={(event) => {
+            pointerDownStartedAtRef.current = null
+            suppressNextClickRef.current = true
+            event.stopPropagation()
+            onDragEnd?.()
+          }}
+          onClick={(event) => {
+            if (suppressNextClickRef.current) {
+              suppressNextClickRef.current = false
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+
+            onOpen?.()
+          }}
           onAuxClick={(event) => {
+            if (suppressNextClickRef.current) {
+              suppressNextClickRef.current = false
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+
             if (event.button === 1) {
               onOpen?.()
             }
@@ -271,13 +336,24 @@ export function ResourceCardItem({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
+          draggable={canDragCard}
           className={cn(
             "group flex flex-col rounded-md border border-border/45 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-background/60",
             isCardDragging ? "border-primary/60 bg-background/70 opacity-65" : "",
+            canDragCard ? "cursor-grab active:cursor-grabbing" : "",
           )}
           data-resource-item-id={resource.id}
           data-resource-category-id={categoryId ?? undefined}
           data-resource-order={typeof order === "number" ? order : undefined}
+          onDragStart={(event) => {
+            if (!onCardDragStart || isCardDragBlockedTarget(event.target)) {
+              event.preventDefault()
+              return
+            }
+
+            onCardDragStart(event)
+          }}
+          onDragEnd={() => onCardDragEnd?.()}
           onContextMenuCapture={handleContextMenuCapture}
           onContextMenu={handleContextMenu}
         >
@@ -285,9 +361,6 @@ export function ResourceCardItem({
             <div className="flex items-center gap-1.5">
               {canDragCard ? (
                 <span
-                  draggable
-                  onDragStart={(event) => onCardDragStart?.(event)}
-                  onDragEnd={onCardDragEnd}
                   aria-label={`Drag ${resource.category} resource card`}
                   title="Drag card"
                   className="inline-flex h-5 w-5 cursor-grab items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground active:cursor-grabbing"

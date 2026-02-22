@@ -5,6 +5,7 @@ import { FixedSizeList, type ListOnScrollProps } from "react-window"
 
 import {
   LINK_ITEM_DRAG_MIME,
+  type LinkItemDragPayload,
   serializeLinkItemDragPayload,
 } from "@/lib/link-item-drag"
 import type { ResourceCard } from "@/lib/resources"
@@ -95,6 +96,19 @@ interface DropTarget {
   categoryId: string
   categoryName: string
   index: number
+}
+
+function setLinkItemDragData(
+  event: React.DragEvent<HTMLElement>,
+  payload: LinkItemDragPayload,
+  textPayload: string,
+) {
+  event.dataTransfer.effectAllowed = "move"
+  event.dataTransfer.setData("text/plain", textPayload)
+  event.dataTransfer.setData(
+    LINK_ITEM_DRAG_MIME,
+    serializeLinkItemDragPayload(payload),
+  )
 }
 
 function DropSlot({
@@ -597,8 +611,14 @@ export function ResourceBoard({
                             return
                           }
 
-                          event.dataTransfer.effectAllowed = "move"
-                          event.dataTransfer.setData("text/plain", resource.id)
+                          const dragPayload: LinkItemDragPayload = {
+                            itemId: resource.id,
+                            linkId: resource.links[0]?.id ?? resource.id,
+                            sourceCategoryId: resolvedCategoryId,
+                            sourceCategoryName: column.name,
+                            sourceIndex: index,
+                          }
+                          setLinkItemDragData(event, dragPayload, resource.id)
                           setDragState({
                             itemId: resource.id,
                             sourceCategoryId: resolvedCategoryId,
@@ -619,19 +639,14 @@ export function ResourceBoard({
                             return
                           }
 
-                          event.dataTransfer.effectAllowed = "move"
-                          const dragPayload = {
+                          const dragPayload: LinkItemDragPayload = {
                             itemId: resource.id,
                             linkId: link.id,
                             sourceCategoryId: resolvedCategoryId,
                             sourceCategoryName: column.name,
                             sourceIndex: index,
                           }
-                          event.dataTransfer.setData("text/plain", link.url)
-                          event.dataTransfer.setData(
-                            LINK_ITEM_DRAG_MIME,
-                            serializeLinkItemDragPayload(dragPayload),
-                          )
+                          setLinkItemDragData(event, dragPayload, link.url)
                         }}
                       />
 
