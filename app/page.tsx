@@ -29,9 +29,11 @@ import type {
   ResourceCard,
   ResourceCategory,
   ResourceInput,
+  ResourceOrganization,
   ResourceWorkspace,
 } from "@/lib/resources";
 import { AddResourceModal } from "@/components/add-resource-modal";
+import { OrganizationRail } from "@/components/organization-rail";
 import {
   ResourceBoard,
   type ResourceBoardMoveInput,
@@ -132,6 +134,16 @@ interface ListWorkspacesResponse extends ApiErrorResponse {
   workspaces?: ResourceWorkspace[];
 }
 
+interface ListOrganizationsResponse extends ApiErrorResponse {
+  mode?: "database" | "mock";
+  organizations?: ResourceOrganization[];
+}
+
+interface OrganizationResponse extends ApiErrorResponse {
+  mode?: "database" | "mock";
+  organization?: ResourceOrganization;
+}
+
 interface ListResourcesResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
   resources?: ResourceCard[];
@@ -145,10 +157,12 @@ interface WorkspaceCountsResponse extends ApiErrorResponse {
 
 interface LibraryBootstrapResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
+  organizationId?: string | null;
   workspaceId?: string | null;
   resources?: ResourceCard[];
   nextOffset?: number | null;
   categories?: ResourceCategory[];
+  organizations?: ResourceOrganization[];
   workspaces?: ResourceWorkspace[];
   workspaceCounts?: Record<string, number>;
 }
@@ -366,6 +380,7 @@ async function readJson<T>(response: Response): Promise<T | null> {
 }
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
+const ACTIVE_ORGANIZATION_STORAGE_KEY = "active-organization-id";
 const ACTIVE_WORKSPACE_STORAGE_KEY = "active-workspace-id";
 const MOBILE_STACK_BREAKPOINT = 768;
 const SIDEBAR_SNAP_GRID = 8;
@@ -755,6 +770,10 @@ function parseCompactQueryValue(rawValue: string | null): boolean | null {
 
 export default function Page() {
   const { data: session, status: sessionStatus } = useSession();
+  const [organizations, setOrganizations] = useState<ResourceOrganization[]>([]);
+  const [activeOrganizationId, setActiveOrganizationId] = useState<string | null>(
+    null,
+  );
   const [resources, setResources] = useState<ResourceCard[]>([]);
   const [resourcesNextOffset, setResourcesNextOffset] = useState<number | null>(
     null,
@@ -851,11 +870,13 @@ export default function Page() {
   const resizeRafIdRef = useRef<number | null>(null);
   const pendingSidebarWidthRef = useRef<number | null>(null);
   const snapshotRequestIdRef = useRef(0);
+  const previousOrganizationIdRef = useRef<string | null>(null);
   const previousWorkspaceIdRef = useRef<string | null>(null);
   const [editingResource, setEditingResource] = useState<ResourceCard | null>(
     null,
   );
   const [isResourcesLoading, setIsResourcesLoading] = useState(true);
+  const [isOrganizationsLoading, setIsOrganizationsLoading] = useState(true);
   const [isCategoriesLoading, setIsCategoriesLoading] = useState(true);
   const [isWorkspacesLoading, setIsWorkspacesLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -881,6 +902,10 @@ export default function Page() {
     useState(false);
   const [createWorkspaceDialogOpen, setCreateWorkspaceDialogOpen] =
     useState(false);
+  const [createOrganizationDialogOpen, setCreateOrganizationDialogOpen] =
+    useState(false);
+  const [newOrganizationName, setNewOrganizationName] = useState("");
+  const [isOrganizationMutating, setIsOrganizationMutating] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [isWorkspaceMutating, setIsWorkspaceMutating] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -929,10 +954,15 @@ export default function Page() {
       : workspaces.filter(
           (workspace) => workspace.ownerUserId === sessionUserId,
         ).length;
+  const canCreateOrganizations = hasAdminAccess(userRole);
   const canCreateWorkspaces = isAuthenticated && ownedWorkspaceCount < 1;
   const canManageResources = isAuthenticated && canCreateResources(userRole);
   const canManageCategories = hasAdminAccess(userRole);
   const canSubmitAuth = authEmail.trim().length > 0 && authPassword.length > 0;
+  const canSubmitOrganization =
+    canCreateOrganizations &&
+    newOrganizationName.trim().length > 0 &&
+    !isOrganizationMutating;
   const canSubmitWorkspace =
     canCreateWorkspaces &&
     newWorkspaceName.trim().length > 0 &&
@@ -1000,6 +1030,9 @@ export default function Page() {
     if (isCategoryMutating) {
       return "Updating category...";
     }
+    if (isOrganizationMutating) {
+      return "Updating organization...";
+    }
     if (isWorkspaceMutating) {
       return "Updating workspace...";
     }
@@ -1039,6 +1072,7 @@ export default function Page() {
     isAskingLibrary,
     isAuthSubmitting,
     isCategoryMutating,
+    isOrganizationMutating,
     isLoadingMoreResources,
     isPasteFlowInProgress,
     isRefreshingLibrary,
@@ -1482,6 +1516,16 @@ export default function Page() {
     });
   }, []);
 
+  const activeOrganization = useMemo(() => {
+    if (!activeOrganizationId) {
+      return null;
+    }
+
+    return (
+      organizations.find((organization) => organization.id === activeOrganizationId) ??
+      null
+    );
+  }, [activeOrganizationId, organizations]);
   const activeWorkspace = useMemo(() => {
     if (!activeWorkspaceId) {
       return null;
@@ -1639,7 +1683,9 @@ export default function Page() {
     [aiInboxItems],
   );
   const isWorkspaceSelectionPending =
-    isWorkspacesLoading && !activeWorkspaceId && workspaces.length === 0;
+    (isOrganizationsLoading || isWorkspacesLoading) &&
+    !activeWorkspaceId &&
+    workspaces.length === 0;
   const showResourceSkeleton =
     !loadError &&
     filteredResources.length === 0 &&
@@ -1676,6 +1722,9 @@ export default function Page() {
 
     return "Viewer mode: browse only. Ask FirstAdmin for elevated access.";
   }, [canManageCategories, canManageResources, isAuthenticated]);
+  const organizationDisplayName = activeOrganization?.name
+    ? activeOrganization.name
+    : "Public";
   const workspaceDisplayName = activeWorkspace?.name
     ? activeWorkspace.name
     : isAuthenticated
@@ -1685,7 +1734,7 @@ export default function Page() {
     ? "Explorer"
     : "Category Explorer";
   const sidebarHeadingMeta = sectionPreferences.showContextLine
-    ? `${workspaceDisplayName} / ${categories.length} categories`
+    ? `${organizationDisplayName} / ${workspaceDisplayName} / ${categories.length} categories`
     : undefined;
   const mainSectionPillLabel = isSearchActive
     ? "Search Results"
@@ -1693,7 +1742,7 @@ export default function Page() {
       ? "Resource Library"
       : "Category Focus";
   const mainSectionMetaLine = sectionPreferences.showContextLine
-    ? `Workspace: ${workspaceDisplayName}`
+    ? `Organization: ${organizationDisplayName} / Workspace: ${workspaceDisplayName}`
     : null;
   const capabilityBadges = useMemo(() => {
     const badges: string[] = [];
@@ -1820,70 +1869,87 @@ export default function Page() {
     }
   }, []);
 
-  const loadLibrarySnapshot = useCallback(async (workspaceId: string | null) => {
-    const requestId = snapshotRequestIdRef.current + 1;
-    snapshotRequestIdRef.current = requestId;
-    setIsResourcesLoading(true);
-    setIsCategoriesLoading(true);
-    setIsWorkspacesLoading(true);
-    setLoadError(null);
+  const loadLibrarySnapshot = useCallback(
+    async (selection: {
+      organizationId: string | null;
+      workspaceId: string | null;
+    }) => {
+      const requestId = snapshotRequestIdRef.current + 1;
+      snapshotRequestIdRef.current = requestId;
+      setIsResourcesLoading(true);
+      setIsOrganizationsLoading(true);
+      setIsCategoriesLoading(true);
+      setIsWorkspacesLoading(true);
+      setLoadError(null);
 
-    try {
-      const params = new URLSearchParams();
-      params.set("limit", String(RESOURCE_PAGE_SIZE));
-      if (workspaceId) {
-        params.set("workspaceId", workspaceId);
-      }
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", String(RESOURCE_PAGE_SIZE));
+        if (selection.organizationId) {
+          params.set("organizationId", selection.organizationId);
+        }
+        if (selection.workspaceId) {
+          params.set("workspaceId", selection.workspaceId);
+        }
 
-      const response = await fetch(`/api/library/bootstrap?${params.toString()}`, {
-        cache: "no-store",
-      });
-      const payload = await readJson<LibraryBootstrapResponse>(response);
+        const response = await fetch(
+          `/api/library/bootstrap?${params.toString()}`,
+          {
+            cache: "no-store",
+          },
+        );
+        const payload = await readJson<LibraryBootstrapResponse>(response);
 
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Failed to load library.");
-      }
+        if (!response.ok) {
+          throw new Error(payload?.error ?? "Failed to load library.");
+        }
 
-      if (snapshotRequestIdRef.current !== requestId) {
-        return;
-      }
+        if (snapshotRequestIdRef.current !== requestId) {
+          return;
+        }
 
-      setResources(payload?.resources ?? []);
-      setResourcesNextOffset(
-        typeof payload?.nextOffset === "number" ? payload.nextOffset : null,
-      );
-      setCategoryRecords(payload?.categories ?? []);
-      setWorkspaces(payload?.workspaces ?? []);
-      setWorkspaceResourceCounts(payload?.workspaceCounts ?? {});
-      setDataMode(payload?.mode === "database" ? "database" : "mock");
+        setResources(payload?.resources ?? []);
+        setResourcesNextOffset(
+          typeof payload?.nextOffset === "number" ? payload.nextOffset : null,
+        );
+        setOrganizations(payload?.organizations ?? []);
+        setCategoryRecords(payload?.categories ?? []);
+        setWorkspaces(payload?.workspaces ?? []);
+        setWorkspaceResourceCounts(payload?.workspaceCounts ?? {});
+        setDataMode(payload?.mode === "database" ? "database" : "mock");
 
-      const resolvedWorkspaceId = payload?.workspaceId ?? null;
-      if (resolvedWorkspaceId && resolvedWorkspaceId !== workspaceId) {
+        const resolvedOrganizationId = payload?.organizationId ?? null;
+        setActiveOrganizationId((previous) =>
+          previous === resolvedOrganizationId ? previous : resolvedOrganizationId,
+        );
+        const resolvedWorkspaceId = payload?.workspaceId ?? null;
         setActiveWorkspaceId((previous) =>
           previous === resolvedWorkspaceId ? previous : resolvedWorkspaceId,
         );
-      }
-    } catch (error) {
-      if (snapshotRequestIdRef.current !== requestId) {
-        return;
-      }
+      } catch (error) {
+        if (snapshotRequestIdRef.current !== requestId) {
+          return;
+        }
 
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : "Failed to load library. Check the database setup and retry.",
-      );
-      setResourcesNextOffset(null);
-    } finally {
-      if (snapshotRequestIdRef.current !== requestId) {
-        return;
-      }
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load library. Check the database setup and retry.",
+        );
+        setResourcesNextOffset(null);
+      } finally {
+        if (snapshotRequestIdRef.current !== requestId) {
+          return;
+        }
 
-      setIsResourcesLoading(false);
-      setIsCategoriesLoading(false);
-      setIsWorkspacesLoading(false);
-    }
-  }, []);
+        setIsResourcesLoading(false);
+        setIsOrganizationsLoading(false);
+        setIsCategoriesLoading(false);
+        setIsWorkspacesLoading(false);
+      }
+    },
+    [],
+  );
 
   const fetchCategories = useCallback(async () => {
     setIsCategoriesLoading(true);
@@ -1922,9 +1988,16 @@ export default function Page() {
   const fetchWorkspaces = useCallback(async () => {
     setIsWorkspacesLoading(true);
     try {
-      const response = await fetch("/api/workspaces", {
-        cache: "no-store",
-      });
+      const params = new URLSearchParams();
+      if (activeOrganizationId) {
+        params.set("organizationId", activeOrganizationId);
+      }
+      const response = await fetch(
+        params.toString() ? `/api/workspaces?${params.toString()}` : "/api/workspaces",
+        {
+          cache: "no-store",
+        },
+      );
       const payload = await readJson<ListWorkspacesResponse>(response);
 
       if (!response.ok) {
@@ -1943,6 +2016,32 @@ export default function Page() {
     } finally {
       setIsWorkspacesLoading(false);
     }
+  }, [activeOrganizationId]);
+
+  const fetchOrganizations = useCallback(async () => {
+    setIsOrganizationsLoading(true);
+    try {
+      const response = await fetch("/api/organizations", {
+        cache: "no-store",
+      });
+      const payload = await readJson<ListOrganizationsResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to load organizations.");
+      }
+
+      setOrganizations(payload?.organizations ?? []);
+      if (payload?.mode) {
+        setDataMode(payload.mode);
+      }
+    } catch (error) {
+      console.error(
+        "Failed to fetch organizations:",
+        error instanceof Error ? error.message : error,
+      );
+    } finally {
+      setIsOrganizationsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -1950,8 +2049,12 @@ export default function Page() {
       return;
     }
 
-    void loadLibrarySnapshot(activeWorkspaceId);
+    void loadLibrarySnapshot({
+      organizationId: activeOrganizationId,
+      workspaceId: activeWorkspaceId,
+    });
   }, [
+    activeOrganizationId,
     activeWorkspaceId,
     hasResolvedInitialWorkspace,
     loadLibrarySnapshot,
@@ -1964,6 +2067,13 @@ export default function Page() {
       return;
     }
 
+    const savedOrganizationId = window.localStorage.getItem(
+      ACTIVE_ORGANIZATION_STORAGE_KEY,
+    );
+    if (savedOrganizationId) {
+      setActiveOrganizationId(savedOrganizationId);
+    }
+
     const savedWorkspaceId = window.localStorage.getItem(
       ACTIVE_WORKSPACE_STORAGE_KEY,
     );
@@ -1973,6 +2083,24 @@ export default function Page() {
 
     setHasResolvedInitialWorkspace(true);
   }, []);
+
+  useEffect(() => {
+    if (organizations.length === 0) {
+      setActiveOrganizationId(null);
+      return;
+    }
+
+    setActiveOrganizationId((previous) => {
+      if (
+        previous &&
+        organizations.some((organization) => organization.id === previous)
+      ) {
+        return previous;
+      }
+
+      return organizations[0]?.id ?? null;
+    });
+  }, [organizations]);
 
   useEffect(() => {
     if (workspaces.length === 0) {
@@ -1991,6 +2119,17 @@ export default function Page() {
       return workspaces[0]?.id ?? null;
     });
   }, [workspaces]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !activeOrganizationId) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      ACTIVE_ORGANIZATION_STORAGE_KEY,
+      activeOrganizationId,
+    );
+  }, [activeOrganizationId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !activeWorkspaceId) {
@@ -2176,6 +2315,21 @@ export default function Page() {
       previous.filter((tag) => allowedTags.has(tag.toLowerCase())),
     );
   }, [askScopeTagOptions]);
+
+  useEffect(() => {
+    if (
+      previousOrganizationIdRef.current !== null &&
+      previousOrganizationIdRef.current !== activeOrganizationId
+    ) {
+      setWorkspaces([]);
+      setActiveWorkspaceId(null);
+      setResources([]);
+      setResourcesNextOffset(null);
+      setCategoryRecords([]);
+    }
+
+    previousOrganizationIdRef.current = activeOrganizationId;
+  }, [activeOrganizationId]);
 
   useEffect(() => {
     if (
@@ -2492,6 +2646,60 @@ export default function Page() {
     }
   }, [authEmail, isResendingVerification]);
 
+  const handleCreateOrganization = useCallback(async () => {
+    if (!canSubmitOrganization) {
+      return;
+    }
+
+    setIsOrganizationMutating(true);
+    try {
+      const response = await fetch("/api/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: newOrganizationName.trim(),
+        }),
+      });
+      const payload = await readJson<OrganizationResponse>(response);
+
+      if (!response.ok || !payload?.organization) {
+        throw new Error(payload?.error ?? "Failed to create organization.");
+      }
+      const createdOrganization = payload.organization;
+
+      if (payload.mode) {
+        setDataMode(payload.mode);
+      }
+
+      setOrganizations((previous) => {
+        const next = [
+          ...previous.filter((item) => item.id !== createdOrganization.id),
+        ];
+        next.push(createdOrganization);
+        return next;
+      });
+      setActiveOrganizationId(createdOrganization.id);
+      setNewOrganizationName("");
+      setCreateOrganizationDialogOpen(false);
+      void fetchOrganizations();
+
+      toast.success("Organization created", {
+        description: `${createdOrganization.name} is ready.`,
+      });
+    } catch (error) {
+      toast.error("Organization creation failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not create organization.",
+      });
+    } finally {
+      setIsOrganizationMutating(false);
+    }
+  }, [canSubmitOrganization, fetchOrganizations, newOrganizationName]);
+
   const handleCreateWorkspace = useCallback(async () => {
     if (!canSubmitWorkspace) {
       return;
@@ -2506,6 +2714,7 @@ export default function Page() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          organizationId: activeOrganizationId,
           name: newWorkspaceName.trim(),
         }),
       });
@@ -2551,7 +2760,13 @@ export default function Page() {
     } finally {
       setIsWorkspaceMutating(false);
     }
-  }, [canSubmitWorkspace, fetchWorkspaceCounts, fetchWorkspaces, newWorkspaceName]);
+  }, [
+    activeOrganizationId,
+    canSubmitWorkspace,
+    fetchWorkspaceCounts,
+    fetchWorkspaces,
+    newWorkspaceName,
+  ]);
 
   const handleCreateCategory = useCallback(async () => {
     if (!canSubmitCategory || !activeWorkspaceId) {
@@ -3466,6 +3681,17 @@ export default function Page() {
     setCreateWorkspaceDialogOpen(true);
   }, [canCreateWorkspaces, isAuthenticated]);
 
+  const handleOpenCreateOrganizationDialog = useCallback(() => {
+    if (!canCreateOrganizations) {
+      toast.error("Insufficient permissions", {
+        description: "Only administrators can create organizations.",
+      });
+      return;
+    }
+
+    setCreateOrganizationDialogOpen(true);
+  }, [canCreateOrganizations]);
+
   const handleOpenWorkspaceSettings = useCallback(() => {
     if (!activeWorkspace?.ownerUserId) {
       return;
@@ -3556,12 +3782,20 @@ export default function Page() {
     setIsRefreshingLibrary(true);
     void (async () => {
       try {
-        await loadLibrarySnapshot(activeWorkspaceId);
+        await loadLibrarySnapshot({
+          organizationId: activeOrganizationId,
+          workspaceId: activeWorkspaceId,
+        });
       } finally {
         setIsRefreshingLibrary(false);
       }
     })();
-  }, [activeWorkspaceId, isRefreshingLibrary, loadLibrarySnapshot]);
+  }, [
+    activeOrganizationId,
+    activeWorkspaceId,
+    isRefreshingLibrary,
+    loadLibrarySnapshot,
+  ]);
 
   const handleLoadMoreResources = useCallback(async () => {
     if (
@@ -4617,7 +4851,7 @@ export default function Page() {
             isReallyCompactMode ? "h-8 w-8" : undefined,
           )}
           onClick={() => setSidebarOpen(true)}
-          aria-label="Open workspace and category menu"
+          aria-label="Open organization, workspace, and category menu"
         >
           <Menu className="h-5 w-5" />
         </Button>
@@ -5092,6 +5326,28 @@ export default function Page() {
         <aside
           className={cn(
             "hidden shrink-0 border-r border-border bg-card md:block",
+            isReallyCompactMode ? "w-9" : "w-12",
+          )}
+          aria-label="Organization navigation"
+        >
+          <OrganizationRail
+            organizations={organizations}
+            activeOrganizationId={activeOrganizationId}
+            compactMode={isReallyCompactMode}
+            isLoading={isOrganizationsLoading}
+            onOrganizationChange={(organizationId) => {
+              setActiveOrganizationId(organizationId);
+              setActiveWorkspaceId(null);
+              setActiveCategory("All");
+            }}
+            canCreateOrganization={canCreateOrganizations}
+            onCreateOrganization={handleOpenCreateOrganizationDialog}
+          />
+        </aside>
+
+        <aside
+          className={cn(
+            "hidden shrink-0 border-r border-border bg-card md:block",
             isReallyCompactMode ? "w-9" : "w-14",
           )}
           aria-label="Workspace navigation"
@@ -5181,6 +5437,27 @@ export default function Page() {
           >
             <div className="border-b border-border/70 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Organizations
+              </p>
+              <div className="mt-2">
+                <OrganizationRail
+                  organizations={organizations}
+                  activeOrganizationId={activeOrganizationId}
+                  orientation="horizontal"
+                  compactMode={isReallyCompactMode}
+                  isLoading={isOrganizationsLoading}
+                  onOrganizationChange={(organizationId) => {
+                    setActiveOrganizationId(organizationId);
+                    setActiveWorkspaceId(null);
+                    setActiveCategory("All");
+                  }}
+                  canCreateOrganization={canCreateOrganizations}
+                  onCreateOrganization={handleOpenCreateOrganizationDialog}
+                />
+              </div>
+            </div>
+            <div className="border-b border-border/70 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Workspaces
               </p>
               <div className="mt-2">
@@ -5219,7 +5496,7 @@ export default function Page() {
                 }
               >
                 {sectionPreferences.showContextLine
-                  ? `Filter categories in ${workspaceDisplayName}`
+                  ? `Filter categories in ${organizationDisplayName} / ${workspaceDisplayName}`
                   : "Filter resources by category"}
               </SheetDescription>
             </SheetHeader>
@@ -6640,6 +6917,46 @@ export default function Page() {
       </Dialog>
 
       <Dialog
+        open={createOrganizationDialogOpen}
+        onOpenChange={(open) => {
+          setCreateOrganizationDialogOpen(open);
+          if (!open) {
+            setNewOrganizationName("");
+            setIsOrganizationMutating(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Organization</DialogTitle>
+            <DialogDescription>
+              Organizations sit above workspaces and control the top-level rail.
+              Only administrators can create them.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-organization-name">Name</Label>
+            <Input
+              id="new-organization-name"
+              value={newOrganizationName}
+              onChange={(event) => setNewOrganizationName(event.target.value)}
+              placeholder="e.g. Client Portfolio"
+              disabled={isOrganizationMutating}
+            />
+          </div>
+
+          <Button
+            type="button"
+            onClick={() => void handleCreateOrganization()}
+            disabled={!canSubmitOrganization}
+          >
+            {isOrganizationMutating ? "Creating..." : "Create Organization"}
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={createWorkspaceDialogOpen}
         onOpenChange={(open) => {
           setCreateWorkspaceDialogOpen(open);
@@ -6653,8 +6970,8 @@ export default function Page() {
           <DialogHeader>
             <DialogTitle>Create Workspace</DialogTitle>
             <DialogDescription>
-              Each account gets one personal workspace for organizing cards and
-              categories.
+              Create this workspace inside{" "}
+              <strong>{organizationDisplayName}</strong>.
             </DialogDescription>
           </DialogHeader>
 

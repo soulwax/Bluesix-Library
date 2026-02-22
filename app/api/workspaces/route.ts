@@ -14,6 +14,7 @@ import {
 export const runtime = "nodejs"
 
 const createWorkspaceSchema = z.object({
+  organizationId: z.string().uuid().optional().nullable(),
   name: z.string().trim().min(1).max(80),
 })
 
@@ -35,11 +36,13 @@ async function readRequestJson(request: Request): Promise<unknown> {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await auth()
+    const organizationId = new URL(request.url).searchParams.get("organizationId")
     const { mode, workspaces } = await listResourceWorkspacesService({
       userId: session?.user?.id ?? null,
+      organizationId,
       includeAllWorkspaces: session?.user?.isFirstAdmin === true,
     })
 
@@ -60,7 +63,11 @@ export async function POST(request: Request) {
     const input = createWorkspaceSchema.parse(payload)
     const { mode, workspace } = await createResourceWorkspaceService(
       input.name,
-      { ownerUserId: session.user.id }
+      {
+        ownerUserId: session.user.id,
+        organizationId: input.organizationId ?? null,
+        includeAllWorkspaces: session.user.isFirstAdmin === true,
+      }
     )
 
     return NextResponse.json({ mode, workspace }, { status: 201 })

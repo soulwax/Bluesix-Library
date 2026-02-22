@@ -20,6 +20,7 @@ import {
   resourceCards,
   resourceCategories,
   resourceLinks,
+  resourceOrganizations,
   resourceTags,
   resourceWorkspaces,
 } from "@/lib/db-schema";
@@ -43,10 +44,12 @@ import type {
   ResourceAuditLogEntry,
   ResourceCard,
   ResourceCategory,
+  ResourceOrganization,
   ResourceInput,
   ResourceWorkspace,
 } from "@/lib/resources";
 
+const MAIN_RESOURCE_ORGANIZATION_NAME = "Public";
 const MAIN_RESOURCE_WORKSPACE_NAME = "Main Workspace";
 const DEFAULT_RESOURCE_CATEGORY_NAME = "General";
 const FALLBACK_RESOURCE_CATEGORY_NAME = "Uncategorized";
@@ -81,6 +84,20 @@ export class ResourceWorkspaceNotFoundError extends Error {
   }
 }
 
+export class ResourceOrganizationNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Organization ${id} was not found.`);
+    this.name = "ResourceOrganizationNotFoundError";
+  }
+}
+
+export class ResourceOrganizationAlreadyExistsError extends Error {
+  constructor(name: string) {
+    super(`Organization ${name} already exists.`);
+    this.name = "ResourceOrganizationAlreadyExistsError";
+  }
+}
+
 export class ResourceWorkspaceAlreadyExistsError extends Error {
   constructor(name: string) {
     super(`Workspace ${name} already exists.`);
@@ -103,6 +120,15 @@ export class ResourceMoveConflictError extends Error {
 }
 
 interface ResourceWorkspaceRow {
+  id: string;
+  organizationId: string;
+  name: string;
+  ownerUserId: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+interface ResourceOrganizationRow {
   id: string;
   name: string;
   ownerUserId: string | null;
@@ -167,6 +193,10 @@ function normalizeTimestamp(value: Date | string | null): string | null {
 }
 
 function normalizeWorkspaceName(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeOrganizationName(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
@@ -238,7 +268,20 @@ function normalizeAuditAction(value: string): ResourceAuditAction {
 function normalizeWorkspaceRow(row: ResourceWorkspaceRow): ResourceWorkspace {
   return {
     id: row.id,
+    organizationId: row.organizationId,
     name: normalizeWorkspaceName(row.name),
+    ownerUserId: row.ownerUserId ?? null,
+    createdAt: normalizeTimestamp(row.createdAt) ?? new Date(0).toISOString(),
+    updatedAt: normalizeTimestamp(row.updatedAt) ?? new Date(0).toISOString(),
+  };
+}
+
+function normalizeOrganizationRow(
+  row: ResourceOrganizationRow,
+): ResourceOrganization {
+  return {
+    id: row.id,
+    name: normalizeOrganizationName(row.name),
     ownerUserId: row.ownerUserId ?? null,
     createdAt: normalizeTimestamp(row.createdAt) ?? new Date(0).toISOString(),
     updatedAt: normalizeTimestamp(row.updatedAt) ?? new Date(0).toISOString(),
@@ -337,6 +380,21 @@ function isWorkspaceVisibleToUser(
   }
 
   return workspaceOwnerUserId === userId;
+}
+
+function isOrganizationVisibleToUser(
+  organizationOwnerUserId: string | null,
+  userId: string | null,
+): boolean {
+  if (!organizationOwnerUserId) {
+    return true;
+  }
+
+  if (!userId) {
+    return false;
+  }
+
+  return organizationOwnerUserId === userId;
 }
 
 interface DatabaseError {
@@ -647,19 +705,63 @@ async function findResourceById(
   return resources[0] ?? null;
 }
 
-// Memoised so the INSERT + SELECT only runs once per process/lambda instance.
+// Memoised so these INSERT + SELECT sequences only run once per process/lambda instance.
 // Concurrent callers share the same promise rather than racing to the DB.
+let mainOrganizationPromise: Promise<ResourceOrganization> | null = null;
 let mainWorkspacePromise: Promise<ResourceWorkspace> | null = null;
+
+async function ensureMainOrganization(): Promise<ResourceOrganization> {
+  if (mainOrganizationPromise) return mainOrganizationPromise;
+
+  mainOrganizationPromise = (async () => {
+    const db = getDb();
+
+    await db.execute(sql`
+      INSERT INTO resource_organizations (name, owner_user_id)
+      VALUES (${MAIN_RESOURCE_ORGANIZATION_NAME}, NULL)
+      ON CONFLICT ((lower(name))) DO NOTHING
+    `);
+
+    const rows = await db
+      .select({
+        id: resourceOrganizations.id,
+        name: resourceOrganizations.name,
+        ownerUserId: resourceOrganizations.ownerUserId,
+        createdAt: resourceOrganizations.createdAt,
+        updatedAt: resourceOrganizations.updatedAt,
+      })
+      .from(resourceOrganizations)
+      .where(
+        and(
+          isNull(resourceOrganizations.ownerUserId),
+          sql`lower(${resourceOrganizations.name}) = ${MAIN_RESOURCE_ORGANIZATION_NAME.toLowerCase()}`,
+        ),
+      )
+      .orderBy(asc(resourceOrganizations.createdAt))
+      .limit(1);
+
+    const organization = rows[0];
+    if (!organization) {
+      mainOrganizationPromise = null;
+      throw new Error("Failed to initialize main organization.");
+    }
+
+    return normalizeOrganizationRow(organization as ResourceOrganizationRow);
+  })();
+
+  return mainOrganizationPromise;
+}
 
 async function ensureMainWorkspace(): Promise<ResourceWorkspace> {
   if (mainWorkspacePromise) return mainWorkspacePromise;
 
   mainWorkspacePromise = (async () => {
     const db = getDb();
+    const mainOrganization = await ensureMainOrganization();
 
     await db.execute(sql`
-      INSERT INTO resource_workspaces (name, owner_user_id)
-      VALUES (${MAIN_RESOURCE_WORKSPACE_NAME}, NULL)
+      INSERT INTO resource_workspaces (organization_id, name, owner_user_id)
+      VALUES (${mainOrganization.id}::uuid, ${MAIN_RESOURCE_WORKSPACE_NAME}, NULL)
       ON CONFLICT (
         (coalesce(owner_user_id, ${WORKSPACE_OWNER_SENTINEL_UUID}::uuid)),
         (lower(name))
@@ -669,6 +771,7 @@ async function ensureMainWorkspace(): Promise<ResourceWorkspace> {
     const rows = await db
       .select({
         id: resourceWorkspaces.id,
+        organizationId: resourceWorkspaces.organizationId,
         name: resourceWorkspaces.name,
         ownerUserId: resourceWorkspaces.ownerUserId,
         createdAt: resourceWorkspaces.createdAt,
@@ -678,6 +781,7 @@ async function ensureMainWorkspace(): Promise<ResourceWorkspace> {
       .where(
         and(
           isNull(resourceWorkspaces.ownerUserId),
+          eq(resourceWorkspaces.organizationId, mainOrganization.id),
           sql`lower(${resourceWorkspaces.name}) = ${MAIN_RESOURCE_WORKSPACE_NAME.toLowerCase()}`,
         ),
       )
@@ -686,7 +790,7 @@ async function ensureMainWorkspace(): Promise<ResourceWorkspace> {
 
     const workspace = rows[0];
     if (!workspace) {
-      mainWorkspacePromise = null; // allow retry on failure
+      mainWorkspacePromise = null;
       throw new Error("Failed to initialize main workspace.");
     }
 
@@ -704,6 +808,7 @@ async function findWorkspaceById(
   const rows = await db
     .select({
       id: resourceWorkspaces.id,
+      organizationId: resourceWorkspaces.organizationId,
       name: resourceWorkspaces.name,
       ownerUserId: resourceWorkspaces.ownerUserId,
       createdAt: resourceWorkspaces.createdAt,
@@ -729,6 +834,7 @@ async function findFirstOwnedWorkspace(
   const rows = await db
     .select({
       id: resourceWorkspaces.id,
+      organizationId: resourceWorkspaces.organizationId,
       name: resourceWorkspaces.name,
       ownerUserId: resourceWorkspaces.ownerUserId,
       createdAt: resourceWorkspaces.createdAt,
@@ -747,26 +853,128 @@ async function findFirstOwnedWorkspace(
   return normalizeWorkspaceRow(row as ResourceWorkspaceRow);
 }
 
-async function listVisibleWorkspaceIds(
+async function findOrganizationById(
+  id: string,
+): Promise<ResourceOrganization | null> {
+  const db = getDb();
+
+  const rows = await db
+    .select({
+      id: resourceOrganizations.id,
+      name: resourceOrganizations.name,
+      ownerUserId: resourceOrganizations.ownerUserId,
+      createdAt: resourceOrganizations.createdAt,
+      updatedAt: resourceOrganizations.updatedAt,
+    })
+    .from(resourceOrganizations)
+    .where(eq(resourceOrganizations.id, id))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return normalizeOrganizationRow(row as ResourceOrganizationRow);
+}
+
+async function listVisibleOrganizationIds(
   userId?: string | null,
   options?: { includeAllWorkspaces?: boolean },
 ): Promise<string[]> {
   const db = getDb();
   const normalizedUserId = normalizeActorUserId(userId);
 
-  await ensureMainWorkspace();
+  await ensureMainOrganization();
 
-  const condition = options?.includeAllWorkspaces
+  const whereCondition = options?.includeAllWorkspaces
+    ? undefined
+    : normalizedUserId
+      ? or(
+          isNull(resourceOrganizations.ownerUserId),
+          eq(resourceOrganizations.ownerUserId, normalizedUserId),
+        )
+      : isNull(resourceOrganizations.ownerUserId);
+
+  const baseQuery = db
+    .select({ id: resourceOrganizations.id })
+    .from(resourceOrganizations);
+  const rows =
+    whereCondition === undefined
+      ? await baseQuery
+      : await baseQuery.where(whereCondition);
+
+  return rows.map((row) => row.id);
+}
+
+async function requireVisibleOrganization(
+  organizationId: string,
+  userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean },
+): Promise<ResourceOrganization> {
+  const normalizedOrganizationId = normalizeAndValidateUuid(
+    organizationId,
+    "Organization ID",
+  );
+  const normalizedUserId = normalizeActorUserId(userId);
+
+  const organization = await findOrganizationById(normalizedOrganizationId);
+  if (!organization) {
+    throw new ResourceOrganizationNotFoundError(normalizedOrganizationId);
+  }
+
+  if (
+    !options?.includeAllWorkspaces &&
+    !isOrganizationVisibleToUser(
+      organization.ownerUserId ?? null,
+      normalizedUserId,
+    )
+  ) {
+    throw new ResourceOrganizationNotFoundError(normalizedOrganizationId);
+  }
+
+  return organization;
+}
+
+async function listVisibleWorkspaceIds(
+  userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean; organizationId?: string | null },
+): Promise<string[]> {
+  const db = getDb();
+  const normalizedUserId = normalizeActorUserId(userId);
+  const normalizedOrganizationId = options?.organizationId?.trim() || null;
+
+  const visibleOrganizationIds = await listVisibleOrganizationIds(userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  });
+  if (visibleOrganizationIds.length === 0) {
+    return [];
+  }
+  if (
+    normalizedOrganizationId &&
+    !visibleOrganizationIds.includes(normalizedOrganizationId)
+  ) {
+    return [];
+  }
+
+  const workspaceVisibilityCondition = options?.includeAllWorkspaces
     ? undefined
     : normalizedUserId
       ? eq(resourceWorkspaces.ownerUserId, normalizedUserId)
       : isNull(resourceWorkspaces.ownerUserId);
+  const workspaceOrganizationCondition = normalizedOrganizationId
+    ? eq(resourceWorkspaces.organizationId, normalizedOrganizationId)
+    : visibleOrganizationIds.length === 1
+      ? eq(resourceWorkspaces.organizationId, visibleOrganizationIds[0])
+      : inArray(resourceWorkspaces.organizationId, visibleOrganizationIds);
 
   const baseQuery = db
     .select({ id: resourceWorkspaces.id })
     .from(resourceWorkspaces);
-  const rows =
-    condition === undefined ? await baseQuery : await baseQuery.where(condition);
+  const whereCondition = workspaceVisibilityCondition
+    ? and(workspaceVisibilityCondition, workspaceOrganizationCondition)
+    : workspaceOrganizationCondition;
+  const rows = await baseQuery.where(whereCondition);
 
   return rows.map((row) => row.id);
 }
@@ -1297,25 +1505,127 @@ async function ensureCategoryVisibleToActor(
   return row;
 }
 
+export async function listResourceOrganizations(options?: {
+  userId?: string | null;
+  includeAllWorkspaces?: boolean;
+}): Promise<ResourceOrganization[]> {
+  await ensureSchema();
+  const db = getDb();
+  const normalizedUserId = normalizeActorUserId(options?.userId);
+
+  await ensureMainOrganization();
+
+  const whereCondition = options?.includeAllWorkspaces
+    ? undefined
+    : normalizedUserId
+      ? or(
+          isNull(resourceOrganizations.ownerUserId),
+          eq(resourceOrganizations.ownerUserId, normalizedUserId),
+        )
+      : isNull(resourceOrganizations.ownerUserId);
+
+  const baseQuery = db
+    .select({
+      id: resourceOrganizations.id,
+      name: resourceOrganizations.name,
+      ownerUserId: resourceOrganizations.ownerUserId,
+      createdAt: resourceOrganizations.createdAt,
+      updatedAt: resourceOrganizations.updatedAt,
+    })
+    .from(resourceOrganizations)
+    .orderBy(
+      sql`${resourceOrganizations.ownerUserId} IS NOT NULL`,
+      sql`lower(${resourceOrganizations.name}) asc`,
+    );
+  const rows =
+    whereCondition === undefined
+      ? await baseQuery
+      : await baseQuery.where(whereCondition);
+
+  return (rows as ResourceOrganizationRow[]).map(normalizeOrganizationRow);
+}
+
+export async function createResourceOrganization(
+  name: string,
+): Promise<ResourceOrganization> {
+  await ensureSchema();
+  const db = getDb();
+  const normalizedName = normalizeOrganizationName(name);
+
+  if (!normalizedName) {
+    throw new Error("Organization name is required.");
+  }
+
+  try {
+    const rows = await db
+      .insert(resourceOrganizations)
+      .values({
+        name: normalizedName,
+        ownerUserId: null,
+      })
+      .returning({
+        id: resourceOrganizations.id,
+        name: resourceOrganizations.name,
+        ownerUserId: resourceOrganizations.ownerUserId,
+        createdAt: resourceOrganizations.createdAt,
+        updatedAt: resourceOrganizations.updatedAt,
+      });
+
+    const created = rows[0];
+    if (!created) {
+      throw new Error("Failed to create organization.");
+    }
+
+    return normalizeOrganizationRow(created as ResourceOrganizationRow);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ResourceOrganizationAlreadyExistsError(normalizedName);
+    }
+
+    throw error;
+  }
+}
+
 export async function listResourceWorkspaces(options?: {
   userId?: string | null;
+  organizationId?: string | null;
   includeAllWorkspaces?: boolean;
 }): Promise<ResourceWorkspace[]> {
   await ensureSchema();
   const db = getDb();
   const normalizedUserId = normalizeActorUserId(options?.userId);
 
-  await ensureMainWorkspace();
+  await ensureMainOrganization();
 
   const whereCondition = options?.includeAllWorkspaces
     ? undefined
     : normalizedUserId
       ? eq(resourceWorkspaces.ownerUserId, normalizedUserId)
       : isNull(resourceWorkspaces.ownerUserId);
+  const visibleOrganizationIds = await listVisibleOrganizationIds(
+    normalizedUserId,
+    { includeAllWorkspaces: options?.includeAllWorkspaces },
+  );
+  if (visibleOrganizationIds.length === 0) {
+    return [];
+  }
+  const normalizedOrganizationId = options?.organizationId?.trim() || null;
+  if (
+    normalizedOrganizationId &&
+    !visibleOrganizationIds.includes(normalizedOrganizationId)
+  ) {
+    return [];
+  }
+  const organizationScopeCondition = normalizedOrganizationId
+    ? eq(resourceWorkspaces.organizationId, normalizedOrganizationId)
+    : visibleOrganizationIds.length === 1
+      ? eq(resourceWorkspaces.organizationId, visibleOrganizationIds[0])
+      : inArray(resourceWorkspaces.organizationId, visibleOrganizationIds);
 
   const baseQuery = db
     .select({
       id: resourceWorkspaces.id,
+      organizationId: resourceWorkspaces.organizationId,
       name: resourceWorkspaces.name,
       ownerUserId: resourceWorkspaces.ownerUserId,
       createdAt: resourceWorkspaces.createdAt,
@@ -1326,24 +1636,29 @@ export async function listResourceWorkspaces(options?: {
       sql`${resourceWorkspaces.ownerUserId} IS NOT NULL`,
       sql`lower(${resourceWorkspaces.name}) asc`,
     );
-  const rows =
+  const scopedCondition =
     whereCondition === undefined
-      ? await baseQuery
-      : await baseQuery.where(whereCondition);
+      ? organizationScopeCondition
+      : and(whereCondition, organizationScopeCondition);
+  const rows = await baseQuery.where(scopedCondition);
 
   return (rows as ResourceWorkspaceRow[]).map(normalizeWorkspaceRow);
 }
 
 export async function createResourceWorkspace(
   name: string,
-  ownerUserId: string,
+  options: {
+    ownerUserId: string;
+    organizationId?: string | null;
+    includeAllWorkspaces?: boolean;
+  },
 ): Promise<ResourceWorkspace> {
   await ensureSchema();
   const db = getDb();
 
   const normalizedName = normalizeWorkspaceName(name);
   const normalizedOwnerUserId = normalizeAndValidateUuid(
-    ownerUserId,
+    options.ownerUserId,
     "Workspace owner ID",
   );
 
@@ -1372,15 +1687,23 @@ export async function createResourceWorkspace(
     throw new ResourceWorkspaceLimitReachedError(1);
   }
 
+  const organization = options.organizationId?.trim()
+    ? await requireVisibleOrganization(options.organizationId, normalizedOwnerUserId, {
+        includeAllWorkspaces: options.includeAllWorkspaces,
+      })
+    : await ensureMainOrganization();
+
   try {
     const rows = await db
       .insert(resourceWorkspaces)
       .values({
+        organizationId: organization.id,
         name: normalizedName,
         ownerUserId: normalizedOwnerUserId,
       })
       .returning({
         id: resourceWorkspaces.id,
+        organizationId: resourceWorkspaces.organizationId,
         name: resourceWorkspaces.name,
         ownerUserId: resourceWorkspaces.ownerUserId,
         createdAt: resourceWorkspaces.createdAt,
@@ -1430,6 +1753,7 @@ export async function renameResourceWorkspace(
       )
       .returning({
         id: resourceWorkspaces.id,
+        organizationId: resourceWorkspaces.organizationId,
         name: resourceWorkspaces.name,
         ownerUserId: resourceWorkspaces.ownerUserId,
         createdAt: resourceWorkspaces.createdAt,

@@ -9,12 +9,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - New `GET /api/workspaces/counts` endpoint for lightweight per-workspace resource totals used by the workspace rail
+- New top-level `Organization` hierarchy (`Organization -> Workspace -> Category -> Item`) with default `Public` organization seeding
+- New `GET/POST /api/organizations` endpoint for listing organizations and creating them (admin-only create)
+- New organization rail (Discord-style vertical rounded-square navigation) above workspace rail in desktop and mobile navigation
 
 ### Changed
 
 - Resource bootstrap now loads workspace-scoped pages (`limit` + `nextOffset`) instead of pulling all workspaces' cards at once
 - `GET /api/resources` now supports workspace filtering and optional pagination (`workspaceId`, `offset`, `limit`)
 - Library board now supports incremental loading with `Load more resources` for large workspaces
+- Bootstrap/workspace APIs now support organization-scoped selection (`organizationId`) and resolve active organization/workspace together
 
 ## [0.2.3] - 2026-02-21
 

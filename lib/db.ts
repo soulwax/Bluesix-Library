@@ -266,13 +266,85 @@ export async function ensureSchema() {
     `;
 
     await sql`
-      CREATE TABLE IF NOT EXISTS resource_workspaces (
+      CREATE TABLE IF NOT EXISTS resource_organizations (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL CHECK (char_length(name) <= 80),
         owner_user_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `;
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS resource_organizations_name_lower_idx
+      ON resource_organizations ((lower(name)))
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_organizations_created_at_idx
+      ON resource_organizations (created_at DESC)
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS resource_organizations_owner_user_id_idx
+      ON resource_organizations (owner_user_id)
+    `;
+
+    await sql`
+      INSERT INTO resource_organizations (name, owner_user_id)
+      VALUES ('Public', NULL)
+      ON CONFLICT ((lower(name))) DO NOTHING
+    `;
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS resource_workspaces (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID,
+        name TEXT NOT NULL CHECK (char_length(name) <= 80),
+        owner_user_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+
+    await sql`
+      ALTER TABLE resource_workspaces
+      ADD COLUMN IF NOT EXISTS organization_id UUID
+    `;
+
+    await sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'resource_workspaces_organization_id_resource_organizations_id_fk'
+        ) THEN
+          ALTER TABLE resource_workspaces
+          ADD CONSTRAINT resource_workspaces_organization_id_resource_organizations_id_fk
+          FOREIGN KEY (organization_id)
+          REFERENCES resource_organizations(id)
+          ON DELETE CASCADE;
+        END IF;
+      END $$;
+    `;
+
+    await sql`
+      UPDATE resource_workspaces
+      SET organization_id = public_org.id
+      FROM (
+        SELECT id
+        FROM resource_organizations
+        WHERE lower(name) = lower('Public')
+        ORDER BY created_at ASC
+        LIMIT 1
+      ) AS public_org
+      WHERE resource_workspaces.organization_id IS NULL
+    `;
+
+    await sql`
+      ALTER TABLE resource_workspaces
+      ALTER COLUMN organization_id SET NOT NULL
     `;
 
     await sql`
@@ -294,8 +366,20 @@ export async function ensureSchema() {
     `;
 
     await sql`
-      INSERT INTO resource_workspaces (name, owner_user_id)
-      VALUES ('Main Workspace', NULL)
+      CREATE INDEX IF NOT EXISTS resource_workspaces_organization_id_idx
+      ON resource_workspaces (organization_id)
+    `;
+
+    await sql`
+      INSERT INTO resource_workspaces (organization_id, name, owner_user_id)
+      SELECT public_org.id, 'Main Workspace', NULL
+      FROM (
+        SELECT id
+        FROM resource_organizations
+        WHERE lower(name) = lower('Public')
+        ORDER BY created_at ASC
+        LIMIT 1
+      ) AS public_org
       ON CONFLICT (
         (coalesce(owner_user_id, '00000000-0000-0000-0000-000000000000'::uuid)),
         (lower(name))

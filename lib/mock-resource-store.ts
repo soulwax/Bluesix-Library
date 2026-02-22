@@ -15,6 +15,7 @@ import type {
   ResourceAuditLogEntry,
   ResourceCard,
   ResourceInput,
+  ResourceOrganization,
   ResourceWorkspace,
 } from "@/lib/resources"
 import { DEFAULT_CATEGORY_SUGGESTIONS } from "@/lib/resources"
@@ -22,6 +23,8 @@ import {
   ResourceCategoryNotFoundError,
   ResourceMoveConflictError,
   ResourceNotFoundError,
+  ResourceOrganizationAlreadyExistsError,
+  ResourceOrganizationNotFoundError,
   ResourceWorkspaceAlreadyExistsError,
   ResourceWorkspaceLimitReachedError,
   ResourceWorkspaceNotFoundError,
@@ -30,8 +33,10 @@ import {
 let mockStore: ResourceCard[] | null = null
 let mockAuditLogs: ResourceAuditLogEntry[] | null = null
 let mockCategories: ResourceCategory[] | null = null
+let mockOrganizations: ResourceOrganization[] | null = null
 let mockWorkspaces: ResourceWorkspace[] | null = null
 
+const MAIN_RESOURCE_ORGANIZATION_NAME = "Public"
 const MAIN_RESOURCE_WORKSPACE_NAME = "Main Workspace"
 const DEFAULT_RESOURCE_CATEGORY_NAME = "General"
 const FALLBACK_RESOURCE_CATEGORY_NAME = "Uncategorized"
@@ -74,6 +79,14 @@ function cloneCategory(category: ResourceCategory): ResourceCategory {
   }
 }
 
+function cloneOrganization(
+  organization: ResourceOrganization
+): ResourceOrganization {
+  return {
+    ...organization,
+  }
+}
+
 function cloneWorkspace(workspace: ResourceWorkspace): ResourceWorkspace {
   return {
     ...workspace,
@@ -81,6 +94,10 @@ function cloneWorkspace(workspace: ResourceWorkspace): ResourceWorkspace {
 }
 
 function normalizeWorkspaceName(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function normalizeOrganizationName(value: string): string {
   return value.replace(/\s+/g, " ").trim()
 }
 
@@ -182,9 +199,53 @@ function isWorkspaceVisibleToUser(
   return workspaceOwnerUserId === userId
 }
 
+function isOrganizationVisibleToUser(
+  organizationOwnerUserId: string | null | undefined,
+  userId: string | null
+): boolean {
+  if (!organizationOwnerUserId) {
+    return true
+  }
+
+  if (!userId) {
+    return false
+  }
+
+  return organizationOwnerUserId === userId
+}
+
+function ensureMainOrganization(): ResourceOrganization {
+  if (mockOrganizations === null) {
+    mockOrganizations = []
+  }
+
+  const existing = (mockOrganizations ?? []).find(
+    (organization) =>
+      !organization.ownerUserId &&
+      organization.name.toLowerCase() === MAIN_RESOURCE_ORGANIZATION_NAME.toLowerCase()
+  )
+
+  if (existing) {
+    return existing
+  }
+
+  const created: ResourceOrganization = {
+    id: crypto.randomUUID(),
+    name: MAIN_RESOURCE_ORGANIZATION_NAME,
+    ownerUserId: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  mockOrganizations = [...(mockOrganizations ?? []), created]
+  return created
+}
+
 function ensureMainWorkspace(): ResourceWorkspace {
+  const mainOrganization = ensureMainOrganization()
   const existing = (mockWorkspaces ?? []).find(
     (workspace) =>
+      workspace.organizationId === mainOrganization.id &&
       !workspace.ownerUserId &&
       workspace.name.toLowerCase() === MAIN_RESOURCE_WORKSPACE_NAME.toLowerCase()
   )
@@ -195,6 +256,7 @@ function ensureMainWorkspace(): ResourceWorkspace {
 
   const created: ResourceWorkspace = {
     id: crypto.randomUUID(),
+    organizationId: mainOrganization.id,
     name: MAIN_RESOURCE_WORKSPACE_NAME,
     ownerUserId: null,
     createdAt: new Date().toISOString(),
@@ -531,11 +593,20 @@ function ensureMockResourcePlacement() {
 }
 
 function ensureMockStore() {
+  if (mockOrganizations === null) {
+    mockOrganizations = []
+  }
+
   if (mockWorkspaces === null) {
     mockWorkspaces = []
   }
 
+  const mainOrganization = ensureMainOrganization()
   const mainWorkspace = ensureMainWorkspace()
+  mockWorkspaces = (mockWorkspaces ?? []).map((workspace) => ({
+    ...workspace,
+    organizationId: workspace.organizationId || mainOrganization.id,
+  }))
 
   if (mockStore === null) {
     mockStore = loadLibraryResourcesFromFile().map((resource) => ({
@@ -610,26 +681,107 @@ function mergeAllMockDuplicateCategories() {
   }
 }
 
-function listVisibleWorkspaceIds(
+function findOrganizationById(
+  organizationId: string
+): ResourceOrganization | null {
+  const normalizedOrganizationId = organizationId.trim()
+  if (!normalizedOrganizationId) {
+    return null
+  }
+
+  return (
+    (mockOrganizations ?? []).find(
+      (organization) => organization.id === normalizedOrganizationId
+    ) ?? null
+  )
+}
+
+function listVisibleOrganizationIds(
   userId?: string | null,
   options?: { includeAllWorkspaces?: boolean }
 ): string[] {
+  ensureMainOrganization()
   if (options?.includeAllWorkspaces) {
-    return (mockWorkspaces ?? []).map((workspace) => workspace.id)
+    return (mockOrganizations ?? []).map((organization) => organization.id)
+  }
+
+  const normalizedUserId = normalizeActorUserId(userId)
+
+  return (mockOrganizations ?? [])
+    .filter((organization) =>
+      isOrganizationVisibleToUser(organization.ownerUserId, normalizedUserId)
+    )
+    .map((organization) => organization.id)
+}
+
+function requireVisibleOrganization(
+  organizationId: string,
+  actorUserId?: string | null,
+  options?: { includeAllWorkspaces?: boolean }
+): ResourceOrganization {
+  const normalizedActorUserId = normalizeActorUserId(actorUserId)
+  const organization = findOrganizationById(organizationId)
+
+  if (!organization) {
+    throw new ResourceOrganizationNotFoundError(organizationId)
+  }
+
+  if (
+    !options?.includeAllWorkspaces &&
+    !isOrganizationVisibleToUser(organization.ownerUserId, normalizedActorUserId)
+  ) {
+    throw new ResourceOrganizationNotFoundError(organizationId)
+  }
+
+  return organization
+}
+
+function listVisibleWorkspaceIds(
+  userId?: string | null,
+  options?: { includeAllWorkspaces?: boolean; organizationId?: string | null }
+): string[] {
+  const visibleOrganizationIds = listVisibleOrganizationIds(userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  })
+  if (visibleOrganizationIds.length === 0) {
+    return []
+  }
+
+  const scopedOrganizationId = options?.organizationId?.trim() || null
+  if (scopedOrganizationId && !visibleOrganizationIds.includes(scopedOrganizationId)) {
+    return []
+  }
+
+  const organizationIdSet = new Set(
+    scopedOrganizationId ? [scopedOrganizationId] : visibleOrganizationIds
+  )
+
+  if (options?.includeAllWorkspaces) {
+    return (mockWorkspaces ?? [])
+      .filter((workspace) => organizationIdSet.has(workspace.organizationId))
+      .map((workspace) => workspace.id)
   }
 
   const normalizedUserId = normalizeActorUserId(userId)
 
   return (mockWorkspaces ?? [])
+    .filter((workspace) => organizationIdSet.has(workspace.organizationId))
     .filter((workspace) =>
       isWorkspaceVisibleToUser(workspace.ownerUserId, normalizedUserId)
     )
     .map((workspace) => workspace.id)
 }
 
-function findFirstOwnedWorkspace(userId: string): ResourceWorkspace | null {
+function findFirstOwnedWorkspace(
+  userId: string,
+  organizationId?: string | null
+): ResourceWorkspace | null {
+  const normalizedOrganizationId = organizationId?.trim() || null
   const workspace = [...(mockWorkspaces ?? [])]
     .filter((item) => item.ownerUserId === userId)
+    .filter((item) =>
+      normalizedOrganizationId ? item.organizationId === normalizedOrganizationId : true
+    )
     .sort((left, right) =>
       (left.createdAt ?? "").localeCompare(right.createdAt ?? "")
     )[0]
@@ -640,15 +792,23 @@ function findFirstOwnedWorkspace(userId: string): ResourceWorkspace | null {
 function resolveWorkspaceForInput(
   workspaceId: string | undefined,
   actorUserId?: string | null,
-  options?: { includeAllWorkspaces?: boolean }
+  options?: { includeAllWorkspaces?: boolean; organizationId?: string | null }
 ): ResourceWorkspace {
   if (workspaceId?.trim()) {
     return requireVisibleWorkspace(workspaceId, actorUserId, options)
   }
 
+  const normalizedOrganizationId = options?.organizationId?.trim() || null
+  if (normalizedOrganizationId) {
+    requireVisibleOrganization(normalizedOrganizationId, actorUserId, options)
+  }
+
   const normalizedActorUserId = normalizeActorUserId(actorUserId)
   if (normalizedActorUserId) {
-    const ownedWorkspace = findFirstOwnedWorkspace(normalizedActorUserId)
+    const ownedWorkspace = findFirstOwnedWorkspace(
+      normalizedActorUserId,
+      normalizedOrganizationId,
+    )
     if (!ownedWorkspace) {
       throw new ResourceWorkspaceNotFoundError("personal-workspace")
     }
@@ -663,6 +823,7 @@ export function resetMockStoreForTests() {
   mockStore = null
   mockAuditLogs = null
   mockCategories = null
+  mockOrganizations = null
   mockWorkspaces = null
 }
 
@@ -671,14 +832,72 @@ export async function hasAnyMockResources(): Promise<boolean> {
   return (mockStore ?? []).length > 0
 }
 
+export async function listMockResourceOrganizations(options?: {
+  userId?: string | null
+  includeAllWorkspaces?: boolean
+}): Promise<ResourceOrganization[]> {
+  ensureMockStore()
+
+  const visibleOrganizationIdSet = new Set(
+    listVisibleOrganizationIds(options?.userId, {
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    })
+  )
+
+  return [...(mockOrganizations ?? [])]
+    .filter((organization) => visibleOrganizationIdSet.has(organization.id))
+    .sort((left, right) => {
+      const leftIsMain = !left.ownerUserId
+      const rightIsMain = !right.ownerUserId
+      if (leftIsMain !== rightIsMain) {
+        return leftIsMain ? -1 : 1
+      }
+
+      return left.name.localeCompare(right.name)
+    })
+    .map(cloneOrganization)
+}
+
+export async function createMockResourceOrganization(
+  name: string
+): Promise<ResourceOrganization> {
+  ensureMockStore()
+
+  const normalizedName = normalizeOrganizationName(name)
+  if (!normalizedName) {
+    throw new Error("Organization name is required.")
+  }
+
+  const exists = (mockOrganizations ?? []).some(
+    (organization) =>
+      organization.name.toLowerCase() === normalizedName.toLowerCase()
+  )
+  if (exists) {
+    throw new ResourceOrganizationAlreadyExistsError(normalizedName)
+  }
+
+  const created: ResourceOrganization = {
+    id: crypto.randomUUID(),
+    name: normalizedName,
+    ownerUserId: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  mockOrganizations = [...(mockOrganizations ?? []), created]
+  return cloneOrganization(created)
+}
+
 export async function listMockResourceWorkspaces(options?: {
   userId?: string | null
+  organizationId?: string | null
   includeAllWorkspaces?: boolean
 }): Promise<ResourceWorkspace[]> {
   ensureMockStore()
 
   const visibleWorkspaceIdSet = new Set(
     listVisibleWorkspaceIds(options?.userId, {
+      organizationId: options?.organizationId,
       includeAllWorkspaces: options?.includeAllWorkspaces,
     })
   )
@@ -699,12 +918,17 @@ export async function listMockResourceWorkspaces(options?: {
 
 export async function createMockResourceWorkspace(
   name: string,
-  ownerUserId: string
+  options: {
+    ownerUserId: string
+    organizationId?: string | null
+    includeAllWorkspaces?: boolean
+  }
 ): Promise<ResourceWorkspace> {
   ensureMockStore()
 
   const normalizedName = normalizeWorkspaceName(name)
-  const normalizedOwnerUserId = ownerUserId.trim()
+  const normalizedOwnerUserId = options.ownerUserId.trim()
+  const normalizedOrganizationId = options.organizationId?.trim() || null
 
   if (!normalizedOwnerUserId) {
     throw new Error("Workspace owner is required.")
@@ -732,8 +956,15 @@ export async function createMockResourceWorkspace(
     throw new ResourceWorkspaceAlreadyExistsError(normalizedName)
   }
 
+  const organization = normalizedOrganizationId
+    ? requireVisibleOrganization(normalizedOrganizationId, normalizedOwnerUserId, {
+        includeAllWorkspaces: options.includeAllWorkspaces,
+      })
+    : ensureMainOrganization()
+
   const created: ResourceWorkspace = {
     id: crypto.randomUUID(),
+    organizationId: organization.id,
     name: normalizedName,
     ownerUserId: normalizedOwnerUserId,
     createdAt: new Date().toISOString(),

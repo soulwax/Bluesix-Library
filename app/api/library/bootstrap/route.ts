@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { auth } from "@/auth"
 import {
   listResourceCategoriesService,
+  listResourceOrganizationsService,
   listResourcesPageService,
   listResourceWorkspaceCountsService,
   listResourceWorkspacesService,
@@ -31,6 +32,8 @@ export async function GET(request: Request) {
   try {
     const session = await auth()
     const url = new URL(request.url)
+    const requestedOrganizationId =
+      url.searchParams.get("organizationId")?.trim() || null
     const requestedWorkspaceId =
       url.searchParams.get("workspaceId")?.trim() || null
     const limit = parseOptionalQueryInt(url.searchParams.get("limit"), 200)
@@ -39,11 +42,23 @@ export async function GET(request: Request) {
       includeAllWorkspaces: session?.user?.isFirstAdmin === true,
     }
 
-    const [workspacesResult, countsResult] =
+    const [organizationsResult, countsResult] =
       await Promise.all([
-        listResourceWorkspacesService(options),
+        listResourceOrganizationsService(options),
         listResourceWorkspaceCountsService(options),
       ])
+    const hasRequestedOrganization =
+      requestedOrganizationId !== null &&
+      organizationsResult.organizations.some(
+        (organization) => organization.id === requestedOrganizationId,
+      )
+    const effectiveOrganizationId = hasRequestedOrganization
+      ? requestedOrganizationId
+      : (organizationsResult.organizations[0]?.id ?? null)
+    const workspacesResult = await listResourceWorkspacesService({
+      ...options,
+      organizationId: effectiveOrganizationId,
+    })
     const hasRequestedWorkspace =
       requestedWorkspaceId !== null &&
       workspacesResult.workspaces.some(
@@ -68,6 +83,7 @@ export async function GET(request: Request) {
     const mode =
       resourcesResult.mode === "database" ||
       categoriesResult.mode === "database" ||
+      organizationsResult.mode === "database" ||
       workspacesResult.mode === "database" ||
       countsResult.mode === "database"
         ? "database"
@@ -75,10 +91,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       mode,
+      organizationId: effectiveOrganizationId,
       workspaceId: effectiveWorkspaceId,
       resources: resourcesResult.resources,
       nextOffset: resourcesResult.nextOffset,
       categories: categoriesResult.categories,
+      organizations: organizationsResult.organizations,
       workspaces: workspacesResult.workspaces,
       workspaceCounts: countsResult.countsByWorkspace,
     })

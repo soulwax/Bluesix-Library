@@ -31,6 +31,15 @@ export interface ResourceCategory {
 
 export interface ResourceWorkspace {
   id: string
+  organizationId: string
+  name: string
+  ownerUserId?: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ResourceOrganization {
+  id: string
   name: string
   ownerUserId?: string | null
   createdAt?: string

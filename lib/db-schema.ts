@@ -96,10 +96,41 @@ export const resourceCategories = pgTable(
   ]
 )
 
+export const resourceOrganizations = pgTable(
+  "resource_organizations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    ownerUserId: uuid("owner_user_id").references(() => appUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "resource_organizations_name_length_check",
+      sql`char_length(${table.name}) <= 80`
+    ),
+    uniqueIndex("resource_organizations_name_lower_idx").on(
+      sql`lower(${table.name})`
+    ),
+    index("resource_organizations_created_at_idx").on(table.createdAt),
+    index("resource_organizations_owner_user_id_idx").on(table.ownerUserId),
+  ]
+)
+
 export const resourceWorkspaces = pgTable(
   "resource_workspaces",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => resourceOrganizations.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     ownerUserId: uuid("owner_user_id").references(() => appUsers.id, {
       onDelete: "set null",
@@ -120,6 +151,7 @@ export const resourceWorkspaces = pgTable(
       sql`coalesce(${table.ownerUserId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
       sql`lower(${table.name})`
     ),
+    index("resource_workspaces_organization_id_idx").on(table.organizationId),
     index("resource_workspaces_created_at_idx").on(table.createdAt),
     index("resource_workspaces_owner_user_id_idx").on(table.ownerUserId),
   ]

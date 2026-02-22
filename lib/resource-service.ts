@@ -5,6 +5,7 @@ import { hasDatabaseEnv } from "@/lib/env"
 import { loadLibraryResourcesFromFile } from "@/lib/library-parser"
 import {
   createMockResourceCategory,
+  createMockResourceOrganization,
   createMockResourceWorkspace,
   createMockResource,
   deleteMockResourceCategory,
@@ -14,6 +15,7 @@ import {
   listMockResourceCategories,
   listMockResourceAuditLogs,
   listMockResourcesIncludingDeleted,
+  listMockResourceOrganizations,
   listMockResourceWorkspaces,
   listMockResources,
   listMockResourcesPage,
@@ -26,6 +28,7 @@ import {
 } from "@/lib/mock-resource-store"
 import {
   createResourceCategory as createDbResourceCategory,
+  createResourceOrganization as createDbResourceOrganization,
   createResourceWorkspace as createDbResourceWorkspace,
   createResource as createDbResource,
   backfillResourceOwnershipToFirstAdmin as backfillDbResourceOwnershipToFirstAdmin,
@@ -35,6 +38,7 @@ import {
   hasAnyResources as hasAnyDbResources,
   listResourceCategories as listDbResourceCategories,
   listResourceAuditLogs as listDbResourceAuditLogs,
+  listResourceOrganizations as listDbResourceOrganizations,
   listResourceCountsByWorkspace as listDbResourceCountsByWorkspace,
   listResourcesIncludingDeleted as listDbResourcesIncludingDeleted,
   listResourceWorkspaces as listDbResourceWorkspaces,
@@ -54,6 +58,7 @@ import type {
   ResourceAuditLogEntry,
   ResourceCard,
   ResourceCategory,
+  ResourceOrganization,
   ResourceInput,
   ResourceWorkspace,
 } from "@/lib/resources"
@@ -126,6 +131,7 @@ async function ensureDatabaseBootstrapped() {
 
 export async function listResourceWorkspacesService(options?: {
   userId?: string | null
+  organizationId?: string | null
   includeAllWorkspaces?: boolean
 }): Promise<{ mode: ResourceDataMode; workspaces: ResourceWorkspace[] }> {
   const mode = currentMode()
@@ -137,6 +143,7 @@ export async function listResourceWorkspacesService(options?: {
       mode,
       workspaces: await listDbResourceWorkspaces({
         userId: options?.userId,
+        organizationId: options?.organizationId,
         includeAllWorkspaces: options?.includeAllWorkspaces,
       }),
     }
@@ -146,27 +153,77 @@ export async function listResourceWorkspacesService(options?: {
     mode,
     workspaces: await listMockResourceWorkspaces({
       userId: options?.userId,
+      organizationId: options?.organizationId,
       includeAllWorkspaces: options?.includeAllWorkspaces,
     }),
   }
 }
 
+export async function listResourceOrganizationsService(options?: {
+  userId?: string | null
+  includeAllWorkspaces?: boolean
+}): Promise<{ mode: ResourceDataMode; organizations: ResourceOrganization[] }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    await ensureDatabaseBootstrapped()
+
+    return {
+      mode,
+      organizations: await listDbResourceOrganizations({
+        userId: options?.userId,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
+      }),
+    }
+  }
+
+  return {
+    mode,
+    organizations: await listMockResourceOrganizations({
+      userId: options?.userId,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    }),
+  }
+}
+
+export async function createResourceOrganizationService(
+  name: string,
+): Promise<{ mode: ResourceDataMode; organization: ResourceOrganization }> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    return {
+      mode,
+      organization: await createDbResourceOrganization(name),
+    }
+  }
+
+  return {
+    mode,
+    organization: await createMockResourceOrganization(name),
+  }
+}
+
 export async function createResourceWorkspaceService(
   name: string,
-  options: { ownerUserId: string }
+  options: {
+    ownerUserId: string
+    organizationId?: string | null
+    includeAllWorkspaces?: boolean
+  }
 ): Promise<{ mode: ResourceDataMode; workspace: ResourceWorkspace }> {
   const mode = currentMode()
 
   if (mode === "database") {
     return {
       mode,
-      workspace: await createDbResourceWorkspace(name, options.ownerUserId),
+      workspace: await createDbResourceWorkspace(name, options),
     }
   }
 
   return {
     mode,
-    workspace: await createMockResourceWorkspace(name, options.ownerUserId),
+    workspace: await createMockResourceWorkspace(name, options),
   }
 }
 
