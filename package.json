@@ -1,11 +1,11 @@
 {
   "name": "my-project",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "next dev --turbo",
-    "prebuild": "cp CHANGELOG.md ./public/CHANGELOG.md",
+    "prebuild": "node -e \"require('node:fs').copyFileSync('CHANGELOG.md', 'public/CHANGELOG.md')\"",
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",

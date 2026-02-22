@@ -18,7 +18,7 @@ import { FileText, Github, Plus, Settings } from "lucide-react";
 
 type OrganizationRailOrientation = "vertical" | "horizontal";
 const PROJECT_GITHUB_URL = "https://github.com/soulwax/lib.bluesix.dev";
-const PROJECT_CHANGELOG_URL = `${PROJECT_GITHUB_URL}/blob/main/CHANGELOG.md`;
+const PROJECT_CHANGELOG_URL = "/CHANGELOG.md";
 
 interface OrganizationRailProps {
   organizations: ResourceOrganization[];

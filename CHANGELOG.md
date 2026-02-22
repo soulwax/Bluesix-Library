@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-02-22
+
+### Changed
+
+- Organization rail changelog shortcut now opens the deployed `/CHANGELOG.md` asset instead of the GitHub blob URL
+- Build `prebuild` step now copies `CHANGELOG.md` with a Node.js script (`fs.copyFileSync`) for cross-platform compatibility
+
+### Fixed
+
+- Next.js route type reference now points to `./.next/types/routes.d.ts` in `next-env.d.ts` to match generated type output
+
 ## [0.2.6] - 2026-02-22
 
 ### Added
