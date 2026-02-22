@@ -132,11 +132,25 @@ interface ListWorkspacesResponse extends ApiErrorResponse {
   workspaces?: ResourceWorkspace[];
 }
 
-interface LibraryBootstrapResponse extends ApiErrorResponse {
+interface ListResourcesResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
   resources?: ResourceCard[];
+  nextOffset?: number | null;
+}
+
+interface WorkspaceCountsResponse extends ApiErrorResponse {
+  mode?: "database" | "mock";
+  countsByWorkspace?: Record<string, number>;
+}
+
+interface LibraryBootstrapResponse extends ApiErrorResponse {
+  mode?: "database" | "mock";
+  workspaceId?: string | null;
+  resources?: ResourceCard[];
+  nextOffset?: number | null;
   categories?: ResourceCategory[];
   workspaces?: ResourceWorkspace[];
+  workspaceCounts?: Record<string, number>;
 }
 
 interface CategoryResponse extends ApiErrorResponse {
@@ -365,6 +379,7 @@ const REALLY_COMPACT_STORAGE_KEY = "really-compact-mode";
 const COMPACT_QUERY_PARAM = "compact";
 const ASK_LIBRARY_HISTORY_LIMIT = 8;
 const AI_INBOX_MAX_URLS = 25;
+const RESOURCE_PAGE_SIZE = 200;
 const DEFAULT_SECTION_PREFERENCES: SectionPreferences = {
   compactTitles: false,
   showContextLine: true,
@@ -741,10 +756,19 @@ function parseCompactQueryValue(rawValue: string | null): boolean | null {
 export default function Page() {
   const { data: session, status: sessionStatus } = useSession();
   const [resources, setResources] = useState<ResourceCard[]>([]);
+  const [resourcesNextOffset, setResourcesNextOffset] = useState<number | null>(
+    null,
+  );
+  const [isLoadingMoreResources, setIsLoadingMoreResources] = useState(false);
   const [workspaces, setWorkspaces] = useState<ResourceWorkspace[]>([]);
+  const [workspaceResourceCounts, setWorkspaceResourceCounts] = useState<
+    Record<string, number>
+  >({});
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(
     null,
   );
+  const [hasResolvedInitialWorkspace, setHasResolvedInitialWorkspace] =
+    useState(false);
   const [categoryRecords, setCategoryRecords] = useState<ResourceCategory[]>(
     [],
   );
@@ -826,6 +850,8 @@ export default function Page() {
   const hasLoadedSidebarWidthRef = useRef(false);
   const resizeRafIdRef = useRef<number | null>(null);
   const pendingSidebarWidthRef = useRef<number | null>(null);
+  const snapshotRequestIdRef = useRef(0);
+  const previousWorkspaceIdRef = useRef<string | null>(null);
   const [editingResource, setEditingResource] = useState<ResourceCard | null>(
     null,
   );
@@ -938,6 +964,9 @@ export default function Page() {
     if (isRefreshingLibrary) {
       return "Refreshing library...";
     }
+    if (isLoadingMoreResources) {
+      return "Loading more resources...";
+    }
     if (isAiInboxAnalyzing) {
       return "Analyzing AI inbox links...";
     }
@@ -1010,6 +1039,7 @@ export default function Page() {
     isAskingLibrary,
     isAuthSubmitting,
     isCategoryMutating,
+    isLoadingMoreResources,
     isPasteFlowInProgress,
     isRefreshingLibrary,
     isResendingVerification,
@@ -1463,14 +1493,6 @@ export default function Page() {
   }, [activeWorkspaceId, workspaces]);
   const hasActiveWorkspace = Boolean(activeWorkspaceId);
 
-  const workspaceResourceCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const resource of resources) {
-      counts[resource.workspaceId] = (counts[resource.workspaceId] ?? 0) + 1;
-    }
-    return counts;
-  }, [resources]);
-
   const resourcesInActiveWorkspace = useMemo(() => {
     if (!activeWorkspaceId) {
       return [];
@@ -1625,10 +1647,14 @@ export default function Page() {
   const showResourceLoadError =
     Boolean(loadError) && !isResourcesLoading && resources.length === 0;
   const isResourceActionDisabled = isResourcesLoading || !activeWorkspaceId;
+  const activeWorkspaceResourceTotal = activeWorkspaceId
+    ? (workspaceResourceCounts[activeWorkspaceId] ?? resourcesInActiveWorkspace.length)
+    : resourcesInActiveWorkspace.length;
+  const hasMoreResources = resourcesNextOffset !== null;
 
   const activeCategoryCount =
     activeCategory === "All"
-      ? resourcesInActiveWorkspace.length
+      ? activeWorkspaceResourceTotal
       : (resourceCounts[activeCategory] ?? 0);
   const activeCategorySymbol =
     activeCategory === "All" ? null : (categorySymbols[activeCategory] ?? null);
@@ -1772,14 +1798,44 @@ export default function Page() {
   const activeColorScheme =
     colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null;
 
-  const loadLibrarySnapshot = useCallback(async () => {
+  const fetchWorkspaceCounts = useCallback(async () => {
+    try {
+      const response = await fetch("/api/workspaces/counts", {
+        cache: "no-store",
+      });
+      const payload = await readJson<WorkspaceCountsResponse>(response);
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to load workspace counts.");
+      }
+
+      setWorkspaceResourceCounts(payload?.countsByWorkspace ?? {});
+      if (payload?.mode) {
+        setDataMode(payload.mode);
+      }
+    } catch (error) {
+      console.error(
+        "Failed to fetch workspace counts:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }, []);
+
+  const loadLibrarySnapshot = useCallback(async (workspaceId: string | null) => {
+    const requestId = snapshotRequestIdRef.current + 1;
+    snapshotRequestIdRef.current = requestId;
     setIsResourcesLoading(true);
     setIsCategoriesLoading(true);
     setIsWorkspacesLoading(true);
     setLoadError(null);
 
     try {
-      const response = await fetch("/api/library/bootstrap", {
+      const params = new URLSearchParams();
+      params.set("limit", String(RESOURCE_PAGE_SIZE));
+      if (workspaceId) {
+        params.set("workspaceId", workspaceId);
+      }
+
+      const response = await fetch(`/api/library/bootstrap?${params.toString()}`, {
         cache: "no-store",
       });
       const payload = await readJson<LibraryBootstrapResponse>(response);
@@ -1788,17 +1844,41 @@ export default function Page() {
         throw new Error(payload?.error ?? "Failed to load library.");
       }
 
+      if (snapshotRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setResources(payload?.resources ?? []);
+      setResourcesNextOffset(
+        typeof payload?.nextOffset === "number" ? payload.nextOffset : null,
+      );
       setCategoryRecords(payload?.categories ?? []);
       setWorkspaces(payload?.workspaces ?? []);
+      setWorkspaceResourceCounts(payload?.workspaceCounts ?? {});
       setDataMode(payload?.mode === "database" ? "database" : "mock");
+
+      const resolvedWorkspaceId = payload?.workspaceId ?? null;
+      if (resolvedWorkspaceId && resolvedWorkspaceId !== workspaceId) {
+        setActiveWorkspaceId((previous) =>
+          previous === resolvedWorkspaceId ? previous : resolvedWorkspaceId,
+        );
+      }
     } catch (error) {
+      if (snapshotRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setLoadError(
         error instanceof Error
           ? error.message
           : "Failed to load library. Check the database setup and retry.",
       );
+      setResourcesNextOffset(null);
     } finally {
+      if (snapshotRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setIsResourcesLoading(false);
       setIsCategoriesLoading(false);
       setIsWorkspacesLoading(false);
@@ -1808,9 +1888,17 @@ export default function Page() {
   const fetchCategories = useCallback(async () => {
     setIsCategoriesLoading(true);
     try {
-      const response = await fetch("/api/categories", {
-        cache: "no-store",
-      });
+      const params = new URLSearchParams();
+      if (activeWorkspaceId) {
+        params.set("workspaceId", activeWorkspaceId);
+      }
+
+      const response = await fetch(
+        params.toString() ? `/api/categories?${params.toString()}` : "/api/categories",
+        {
+          cache: "no-store",
+        },
+      );
       const payload = await readJson<ListCategoriesResponse>(response);
 
       if (!response.ok) {
@@ -1829,7 +1917,7 @@ export default function Page() {
     } finally {
       setIsCategoriesLoading(false);
     }
-  }, []);
+  }, [activeWorkspaceId]);
 
   const fetchWorkspaces = useCallback(async () => {
     setIsWorkspacesLoading(true);
@@ -1858,12 +1946,18 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    if (sessionStatus === "loading") {
+    if (sessionStatus === "loading" || !hasResolvedInitialWorkspace) {
       return;
     }
 
-    void loadLibrarySnapshot();
-  }, [loadLibrarySnapshot, sessionStatus, sessionUserId]);
+    void loadLibrarySnapshot(activeWorkspaceId);
+  }, [
+    activeWorkspaceId,
+    hasResolvedInitialWorkspace,
+    loadLibrarySnapshot,
+    sessionStatus,
+    sessionUserId,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1876,6 +1970,8 @@ export default function Page() {
     if (savedWorkspaceId) {
       setActiveWorkspaceId(savedWorkspaceId);
     }
+
+    setHasResolvedInitialWorkspace(true);
   }, []);
 
   useEffect(() => {
@@ -2080,6 +2176,19 @@ export default function Page() {
       previous.filter((tag) => allowedTags.has(tag.toLowerCase())),
     );
   }, [askScopeTagOptions]);
+
+  useEffect(() => {
+    if (
+      previousWorkspaceIdRef.current !== null &&
+      previousWorkspaceIdRef.current !== activeWorkspaceId
+    ) {
+      setResources([]);
+      setResourcesNextOffset(null);
+      setCategoryRecords([]);
+    }
+
+    previousWorkspaceIdRef.current = activeWorkspaceId;
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     setAskLibraryThreadId(null);
@@ -2420,9 +2529,14 @@ export default function Page() {
       });
       setActiveWorkspaceId(createdWorkspace.id);
       setActiveCategory("All");
+      setWorkspaceResourceCounts((previous) => ({
+        ...previous,
+        [createdWorkspace.id]: previous[createdWorkspace.id] ?? 0,
+      }));
       setNewWorkspaceName("");
       setCreateWorkspaceDialogOpen(false);
       void fetchWorkspaces();
+      void fetchWorkspaceCounts();
 
       toast.success("Workspace created", {
         description: `${createdWorkspace.name} is ready.`,
@@ -2437,7 +2551,7 @@ export default function Page() {
     } finally {
       setIsWorkspaceMutating(false);
     }
-  }, [canSubmitWorkspace, fetchWorkspaces, newWorkspaceName]);
+  }, [canSubmitWorkspace, fetchWorkspaceCounts, fetchWorkspaces, newWorkspaceName]);
 
   const handleCreateCategory = useCallback(async () => {
     if (!canSubmitCategory || !activeWorkspaceId) {
@@ -2909,6 +3023,13 @@ export default function Page() {
             resource.id === savedResource.id ? savedResource : resource,
           );
         });
+        if (!isEditing && savedResource.workspaceId) {
+          setWorkspaceResourceCounts((previous) => ({
+            ...previous,
+            [savedResource.workspaceId]:
+              (previous[savedResource.workspaceId] ?? 0) + 1,
+          }));
+        }
 
         setEditingResource(null);
         setModalOpen(false);
@@ -3029,6 +3150,11 @@ export default function Page() {
         );
         return [restoredResource, ...withoutRestored];
       });
+      setWorkspaceResourceCounts((previous) => ({
+        ...previous,
+        [restoredResource.workspaceId]:
+          (previous[restoredResource.workspaceId] ?? 0) + 1,
+      }));
 
       return restoredResource;
     },
@@ -3071,6 +3197,13 @@ export default function Page() {
         setResources((prev) =>
           prev.filter((resource) => resource.id !== resourceId),
         );
+        setWorkspaceResourceCounts((previous) => ({
+          ...previous,
+          [archivedResource.workspaceId]: Math.max(
+            0,
+            (previous[archivedResource.workspaceId] ?? 1) - 1,
+          ),
+        }));
         toast("Resource archived", {
           description:
             "Hidden from library. Restore it now or from Admin Panel.",
@@ -3398,15 +3531,22 @@ export default function Page() {
 
       setWorkspaces((previous) => previous.filter((w) => w.id !== activeWorkspace.id));
       setResources((previous) => previous.filter((r) => r.workspaceId !== activeWorkspace.id));
+      setResourcesNextOffset(null);
+      setWorkspaceResourceCounts((previous) => {
+        const next = { ...previous };
+        delete next[activeWorkspace.id];
+        return next;
+      });
       setActiveWorkspaceId(null);
       setWorkspaceSettingsOpen(false);
+      void fetchWorkspaceCounts();
       toast.success("Collection deleted");
     } catch {
       toast.error("Failed to delete collection");
     } finally {
       setIsWorkspaceDeleting(false);
     }
-  }, [activeWorkspace, session?.user?.id]);
+  }, [activeWorkspace, fetchWorkspaceCounts, session?.user?.id]);
 
   const handleRefreshLibrary = useCallback(() => {
     if (isRefreshingLibrary) {
@@ -3416,12 +3556,62 @@ export default function Page() {
     setIsRefreshingLibrary(true);
     void (async () => {
       try {
-        await loadLibrarySnapshot();
+        await loadLibrarySnapshot(activeWorkspaceId);
       } finally {
         setIsRefreshingLibrary(false);
       }
     })();
-  }, [isRefreshingLibrary, loadLibrarySnapshot]);
+  }, [activeWorkspaceId, isRefreshingLibrary, loadLibrarySnapshot]);
+
+  const handleLoadMoreResources = useCallback(async () => {
+    if (
+      !activeWorkspaceId ||
+      resourcesNextOffset === null ||
+      isLoadingMoreResources
+    ) {
+      return;
+    }
+
+    setIsLoadingMoreResources(true);
+    try {
+      const params = new URLSearchParams({
+        workspaceId: activeWorkspaceId,
+        limit: String(RESOURCE_PAGE_SIZE),
+        offset: String(resourcesNextOffset),
+      });
+      const response = await fetch(`/api/resources?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const payload = await readJson<ListResourcesResponse>(response);
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to load more resources.");
+      }
+
+      setResources((previous) => {
+        const nextById = new Map(previous.map((resource) => [resource.id, resource]));
+        for (const resource of payload?.resources ?? []) {
+          nextById.set(resource.id, resource);
+        }
+        return [...nextById.values()];
+      });
+      setResourcesNextOffset(
+        typeof payload?.nextOffset === "number" ? payload.nextOffset : null,
+      );
+    } catch (error) {
+      toast.error("Load more failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not load additional resources.",
+      });
+    } finally {
+      setIsLoadingMoreResources(false);
+    }
+  }, [
+    activeWorkspaceId,
+    isLoadingMoreResources,
+    resourcesNextOffset,
+  ]);
 
   const handleModalOpenChange = useCallback((open: boolean) => {
     setModalOpen(open);
@@ -4127,6 +4317,11 @@ export default function Page() {
 
       if (createdResources.length > 0) {
         setResources((previous) => [...createdResources, ...previous]);
+        setWorkspaceResourceCounts((previous) => ({
+          ...previous,
+          [activeWorkspaceId]:
+            (previous[activeWorkspaceId] ?? 0) + createdResources.length,
+        }));
         void fetchCategories();
       }
 
@@ -5252,10 +5447,26 @@ export default function Page() {
                 </div>
               ) : filteredResources.length === 0 ? (
                 isReallyCompactMode ? (
-                  <div className="flex flex-1 items-center justify-center rounded-sm border border-dashed border-border/60 p-2 text-[11px] text-muted-foreground">
-                    {searchQuery
-                      ? `No matches for \"${searchQuery}\".`
-                      : "No resources in this view."}
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-sm border border-dashed border-border/60 p-2 text-[11px] text-muted-foreground">
+                    <p>
+                      {searchQuery
+                        ? `No matches for \"${searchQuery}\".`
+                        : "No resources in this view."}
+                    </p>
+                    {hasMoreResources ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          void handleLoadMoreResources();
+                        }}
+                        disabled={isLoadingMoreResources || !activeWorkspaceId}
+                        className="h-7 px-2 text-[11px]"
+                      >
+                        {isLoadingMoreResources ? "Loading..." : "Load more"}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
@@ -5306,24 +5517,65 @@ export default function Page() {
                         Sign in
                       </Button>
                     ) : null}
+                    {hasMoreResources ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          void handleLoadMoreResources();
+                        }}
+                        disabled={isLoadingMoreResources || !activeWorkspaceId}
+                        className="gap-2"
+                      >
+                        {isLoadingMoreResources ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : null}
+                        {isLoadingMoreResources
+                          ? "Loading..."
+                          : "Load more resources"}
+                      </Button>
+                    ) : null}
                   </div>
                 )
               ) : (
-                <ResourceBoard
-                  columns={boardColumns}
-                  resources={filteredResources}
-                  activeWorkspaceName={workspaceDisplayName}
-                  compactMode={isReallyCompactMode}
-                  dragEnabled={canManageResources && !isSearchActive}
-                  canManageResource={canManageResourceCard}
-                  canEditCategoryByName={canEditCategoryByName}
-                  onEditCategory={handleOpenEditCategoryDialogByName}
-                  onMoveItem={handleMoveResourceItem}
-                  onDelete={handleDelete}
-                  onEdit={handleEdit}
-                  deletingResourceId={deletingResourceId}
-                  openLinksInSameTab={generalSettings.openLinksInSameTab}
-                />
+                <>
+                  <ResourceBoard
+                    columns={boardColumns}
+                    resources={filteredResources}
+                    activeWorkspaceName={workspaceDisplayName}
+                    compactMode={isReallyCompactMode}
+                    dragEnabled={canManageResources && !isSearchActive}
+                    canManageResource={canManageResourceCard}
+                    canEditCategoryByName={canEditCategoryByName}
+                    onEditCategory={handleOpenEditCategoryDialogByName}
+                    onMoveItem={handleMoveResourceItem}
+                    onDelete={handleDelete}
+                    onEdit={handleEdit}
+                    deletingResourceId={deletingResourceId}
+                    openLinksInSameTab={generalSettings.openLinksInSameTab}
+                  />
+                  {hasMoreResources ? (
+                    <div className="mt-4 flex flex-col items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          void handleLoadMoreResources();
+                        }}
+                        disabled={isLoadingMoreResources || !activeWorkspaceId}
+                        className="min-w-44 gap-2"
+                      >
+                        {isLoadingMoreResources ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : null}
+                        {isLoadingMoreResources ? "Loading..." : "Load more resources"}
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Loaded {resources.length} of {activeWorkspaceResourceTotal}
+                      </p>
+                    </div>
+                  ) : null}
+                </>
               )}
             </main>
           </ContextMenuTrigger>

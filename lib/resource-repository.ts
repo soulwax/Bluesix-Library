@@ -215,6 +215,22 @@ function normalizeSortOrder(value: number | null | undefined): number {
   return Math.max(0, Math.floor(value));
 }
 
+function normalizePageOffset(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(value));
+}
+
+function normalizePageLimit(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 200;
+  }
+
+  return Math.max(1, Math.min(500, Math.floor(value)));
+}
+
 function normalizeAuditAction(value: string): ResourceAuditAction {
   return value === "restored" ? "restored" : "archived";
 }
@@ -1699,6 +1715,7 @@ export async function hasAnyResources(): Promise<boolean> {
 
 export async function listResources(options?: {
   userId?: string | null;
+  workspaceId?: string | null;
   includeAllWorkspaces?: boolean;
 }): Promise<ResourceCard[]> {
   await ensureSchema();
@@ -1711,10 +1728,17 @@ export async function listResources(options?: {
     return [];
   }
 
+  const scopedWorkspaceId = options?.workspaceId?.trim() || null;
+  if (scopedWorkspaceId && !visibleWorkspaceIds.includes(scopedWorkspaceId)) {
+    return [];
+  }
+
   const workspaceScopeCondition =
-    visibleWorkspaceIds.length === 1
-      ? eq(resourceCards.workspaceId, visibleWorkspaceIds[0])
-      : inArray(resourceCards.workspaceId, visibleWorkspaceIds);
+    scopedWorkspaceId
+      ? eq(resourceCards.workspaceId, scopedWorkspaceId)
+      : visibleWorkspaceIds.length === 1
+        ? eq(resourceCards.workspaceId, visibleWorkspaceIds[0])
+        : inArray(resourceCards.workspaceId, visibleWorkspaceIds);
 
   const rows = await db
     .select({
@@ -1737,6 +1761,127 @@ export async function listResources(options?: {
     .orderBy(desc(resourceCards.createdAt), asc(resourceLinks.position));
 
   return attachTagsAndFavicons(mapRowsToResources(rows));
+}
+
+export async function listResourcesPage(options?: {
+  userId?: string | null;
+  workspaceId?: string | null;
+  includeAllWorkspaces?: boolean;
+  offset?: number;
+  limit?: number;
+}): Promise<{ resources: ResourceCard[]; nextOffset: number | null }> {
+  await ensureSchema();
+  const db = getDb();
+  const visibleWorkspaceIds = await listVisibleWorkspaceIds(options?.userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  });
+
+  if (visibleWorkspaceIds.length === 0) {
+    return {
+      resources: [],
+      nextOffset: null,
+    };
+  }
+
+  const scopedWorkspaceId = options?.workspaceId?.trim() || null;
+  if (scopedWorkspaceId && !visibleWorkspaceIds.includes(scopedWorkspaceId)) {
+    return {
+      resources: [],
+      nextOffset: null,
+    };
+  }
+
+  const workspaceScopeCondition =
+    scopedWorkspaceId
+      ? eq(resourceCards.workspaceId, scopedWorkspaceId)
+      : visibleWorkspaceIds.length === 1
+        ? eq(resourceCards.workspaceId, visibleWorkspaceIds[0])
+        : inArray(resourceCards.workspaceId, visibleWorkspaceIds);
+  const offset = normalizePageOffset(options?.offset);
+  const limit = normalizePageLimit(options?.limit);
+
+  const pageCards = await db
+    .select({
+      id: resourceCards.id,
+      createdAt: resourceCards.createdAt,
+    })
+    .from(resourceCards)
+    .where(and(isNull(resourceCards.deletedAt), workspaceScopeCondition))
+    .orderBy(desc(resourceCards.createdAt), asc(resourceCards.id))
+    .offset(offset)
+    .limit(limit + 1);
+
+  if (pageCards.length === 0) {
+    return {
+      resources: [],
+      nextOffset: null,
+    };
+  }
+
+  const hasMore = pageCards.length > limit;
+  const pagedCards = hasMore ? pageCards.slice(0, limit) : pageCards;
+  const pagedIds = pagedCards.map((card) => card.id);
+
+  const rows = await db
+    .select({
+      resourceId: resourceCards.id,
+      resourceWorkspaceId: resourceCards.workspaceId,
+      resourceCategoryId: resourceCards.categoryId,
+      resourceCategory: resourceCards.category,
+      resourceSortOrder: resourceCards.sortOrder,
+      resourceOwnerUserId: resourceCards.ownerUserId,
+      resourceDeletedAt: resourceCards.deletedAt,
+      resourceCreatedAt: resourceCards.createdAt,
+      linkId: resourceLinks.id,
+      linkUrl: resourceLinks.url,
+      linkLabel: resourceLinks.label,
+      linkNote: resourceLinks.note,
+    })
+    .from(resourceCards)
+    .leftJoin(resourceLinks, eq(resourceCards.id, resourceLinks.resourceId))
+    .where(inArray(resourceCards.id, pagedIds))
+    .orderBy(desc(resourceCards.createdAt), asc(resourceLinks.position));
+
+  return {
+    resources: await attachTagsAndFavicons(mapRowsToResources(rows)),
+    nextOffset: hasMore ? offset + limit : null,
+  };
+}
+
+export async function listResourceCountsByWorkspace(options?: {
+  userId?: string | null;
+  includeAllWorkspaces?: boolean;
+}): Promise<Record<string, number>> {
+  await ensureSchema();
+  const db = getDb();
+  const visibleWorkspaceIds = await listVisibleWorkspaceIds(options?.userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  });
+
+  if (visibleWorkspaceIds.length === 0) {
+    return {};
+  }
+
+  const workspaceScopeCondition =
+    visibleWorkspaceIds.length === 1
+      ? eq(resourceCards.workspaceId, visibleWorkspaceIds[0])
+      : inArray(resourceCards.workspaceId, visibleWorkspaceIds);
+
+  const rows = await db
+    .select({
+      workspaceId: resourceCards.workspaceId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(resourceCards)
+    .where(and(isNull(resourceCards.deletedAt), workspaceScopeCondition))
+    .groupBy(resourceCards.workspaceId);
+
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    counts[row.workspaceId] = Number(row.count) || 0;
+  }
+
+  return counts;
 }
 
 export async function listResourcesIncludingDeleted(): Promise<ResourceCard[]> {

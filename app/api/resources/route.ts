@@ -9,6 +9,7 @@ import {
 } from "@/lib/resource-repository"
 import {
   createResourceService,
+  listResourcesPageService,
   listResourcesService,
 } from "@/lib/resource-service"
 import { parseResourceInput } from "@/lib/resource-validation"
@@ -55,14 +56,54 @@ async function readRequestJson(request: Request): Promise<unknown> {
   }
 }
 
-export async function GET() {
+function parseOptionalQueryInt(
+  value: string | null,
+  fieldName: string,
+): number | undefined {
+  if (value === null || value.trim().length === 0) {
+    return undefined
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: [fieldName],
+        message: `${fieldName} must be a non-negative integer.`,
+      },
+    ])
+  }
+
+  return parsed
+}
+
+export async function GET(request: Request) {
   try {
     const session = await auth()
-    const { mode, resources } = await listResourcesService({
+    const url = new URL(request.url)
+    const workspaceId = url.searchParams.get("workspaceId")?.trim() || null
+    const offset = parseOptionalQueryInt(url.searchParams.get("offset"), "offset")
+    const limit = parseOptionalQueryInt(url.searchParams.get("limit"), "limit")
+    const paginationRequested =
+      typeof offset === "number" || typeof limit === "number"
+    const options = {
       userId: session?.user?.id ?? null,
+      workspaceId,
       includeAllWorkspaces: session?.user?.isFirstAdmin === true,
-    })
-    return NextResponse.json({ mode, resources })
+    }
+
+    if (paginationRequested) {
+      const { mode, resources, nextOffset } = await listResourcesPageService({
+        ...options,
+        offset,
+        limit,
+      })
+      return NextResponse.json({ mode, resources, nextOffset })
+    }
+
+    const { mode, resources } = await listResourcesService(options)
+    return NextResponse.json({ mode, resources, nextOffset: null })
   } catch (error) {
     return handleRouteError(error)
   }

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- New `GET /api/workspaces/counts` endpoint for lightweight per-workspace resource totals used by the workspace rail
+
+### Changed
+
+- Resource bootstrap now loads workspace-scoped pages (`limit` + `nextOffset`) instead of pulling all workspaces' cards at once
+- `GET /api/resources` now supports workspace filtering and optional pagination (`workspaceId`, `offset`, `limit`)
+- Library board now supports incremental loading with `Load more resources` for large workspaces
+
 ## [0.2.3] - 2026-02-21
 
 ### Added

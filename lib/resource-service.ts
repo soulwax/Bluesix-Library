@@ -16,6 +16,8 @@ import {
   listMockResourcesIncludingDeleted,
   listMockResourceWorkspaces,
   listMockResources,
+  listMockResourcesPage,
+  listMockResourceCountsByWorkspace,
   moveMockResourceItem,
   renameMockResourceWorkspace,
   updateMockResourceCategory,
@@ -33,9 +35,11 @@ import {
   hasAnyResources as hasAnyDbResources,
   listResourceCategories as listDbResourceCategories,
   listResourceAuditLogs as listDbResourceAuditLogs,
+  listResourceCountsByWorkspace as listDbResourceCountsByWorkspace,
   listResourcesIncludingDeleted as listDbResourcesIncludingDeleted,
   listResourceWorkspaces as listDbResourceWorkspaces,
   listResources as listDbResources,
+  listResourcesPage as listDbResourcesPage,
   moveResourceItem as moveDbResourceItem,
   mergeDuplicateResourceCategories as mergeDbDuplicateResourceCategories,
   renameResourceWorkspace as renameDbResourceWorkspace,
@@ -168,6 +172,7 @@ export async function createResourceWorkspaceService(
 
 export async function listResourcesService(options?: {
   userId?: string | null
+  workspaceId?: string | null
   includeAllWorkspaces?: boolean
 }): Promise<{
   mode: ResourceDataMode
@@ -182,6 +187,7 @@ export async function listResourcesService(options?: {
       mode,
       resources: await listDbResources({
         userId: options?.userId,
+        workspaceId: options?.workspaceId,
         includeAllWorkspaces: options?.includeAllWorkspaces,
       }),
     }
@@ -190,6 +196,73 @@ export async function listResourcesService(options?: {
   return {
     mode,
     resources: await listMockResources({
+      userId: options?.userId,
+      workspaceId: options?.workspaceId,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    }),
+  }
+}
+
+export async function listResourcesPageService(options?: {
+  userId?: string | null
+  workspaceId?: string | null
+  includeAllWorkspaces?: boolean
+  offset?: number
+  limit?: number
+}): Promise<{
+  mode: ResourceDataMode
+  resources: ResourceCard[]
+  nextOffset: number | null
+}> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    await ensureDatabaseBootstrapped()
+
+    const result = await listDbResourcesPage({
+      userId: options?.userId,
+      workspaceId: options?.workspaceId,
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+      offset: options?.offset,
+      limit: options?.limit,
+    })
+    return { mode, ...result }
+  }
+
+  const result = await listMockResourcesPage({
+    userId: options?.userId,
+    workspaceId: options?.workspaceId,
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+    offset: options?.offset,
+    limit: options?.limit,
+  })
+  return { mode, ...result }
+}
+
+export async function listResourceWorkspaceCountsService(options?: {
+  userId?: string | null
+  includeAllWorkspaces?: boolean
+}): Promise<{
+  mode: ResourceDataMode
+  countsByWorkspace: Record<string, number>
+}> {
+  const mode = currentMode()
+
+  if (mode === "database") {
+    await ensureDatabaseBootstrapped()
+
+    return {
+      mode,
+      countsByWorkspace: await listDbResourceCountsByWorkspace({
+        userId: options?.userId,
+        includeAllWorkspaces: options?.includeAllWorkspaces,
+      }),
+    }
+  }
+
+  return {
+    mode,
+    countsByWorkspace: await listMockResourceCountsByWorkspace({
       userId: options?.userId,
       includeAllWorkspaces: options?.includeAllWorkspaces,
     }),

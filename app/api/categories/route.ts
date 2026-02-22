@@ -37,11 +37,13 @@ async function readRequestJson(request: Request): Promise<unknown> {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await auth()
+    const workspaceId = new URL(request.url).searchParams.get("workspaceId")
     const { mode, categories } = await listResourceCategoriesService({
       userId: session?.user?.id ?? null,
+      workspaceId,
       includeAllWorkspaces: session?.user?.isFirstAdmin === true,
     })
     return NextResponse.json({ mode, categories })

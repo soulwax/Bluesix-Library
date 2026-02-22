@@ -808,18 +808,26 @@ export async function deleteMockResourceWorkspace(
 
 export async function listMockResources(options?: {
   userId?: string | null
+  workspaceId?: string | null
   includeAllWorkspaces?: boolean
 }): Promise<ResourceCard[]> {
   ensureMockStore()
-  const visibleWorkspaceIdSet = new Set(
-    listVisibleWorkspaceIds(options?.userId, {
-      includeAllWorkspaces: options?.includeAllWorkspaces,
-    })
-  )
+  const visibleWorkspaceIds = listVisibleWorkspaceIds(options?.userId, {
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  })
+  const visibleWorkspaceIdSet = new Set(visibleWorkspaceIds)
+  const scopedWorkspaceId = options?.workspaceId?.trim() || null
+
+  if (scopedWorkspaceId && !visibleWorkspaceIdSet.has(scopedWorkspaceId)) {
+    return []
+  }
 
   return (mockStore ?? [])
     .filter((resource) => !resource.deletedAt)
     .filter((resource) => visibleWorkspaceIdSet.has(resource.workspaceId))
+    .filter((resource) =>
+      scopedWorkspaceId ? resource.workspaceId === scopedWorkspaceId : true
+    )
     .sort((left, right) => {
       if (left.workspaceId !== right.workspaceId) {
         return left.workspaceId.localeCompare(right.workspaceId)
@@ -832,6 +840,64 @@ export async function listMockResources(options?: {
       return compareResourcesForOrder(left, right)
     })
     .map(cloneResource)
+}
+
+export async function listMockResourcesPage(options?: {
+  userId?: string | null
+  workspaceId?: string | null
+  includeAllWorkspaces?: boolean
+  offset?: number
+  limit?: number
+}): Promise<{ resources: ResourceCard[]; nextOffset: number | null }> {
+  ensureMockStore()
+
+  const allVisibleResources = await listMockResources({
+    userId: options?.userId,
+    workspaceId: options?.workspaceId,
+    includeAllWorkspaces: options?.includeAllWorkspaces,
+  })
+  const offset =
+    typeof options?.offset === "number" && Number.isFinite(options.offset)
+      ? Math.max(0, Math.floor(options.offset))
+      : 0
+  const limit =
+    typeof options?.limit === "number" && Number.isFinite(options.limit)
+      ? Math.max(1, Math.min(500, Math.floor(options.limit)))
+      : 200
+  const nextSlice = allVisibleResources.slice(offset, offset + limit + 1)
+  const hasMore = nextSlice.length > limit
+  const resources = hasMore ? nextSlice.slice(0, limit) : nextSlice
+
+  return {
+    resources,
+    nextOffset: hasMore ? offset + limit : null,
+  }
+}
+
+export async function listMockResourceCountsByWorkspace(options?: {
+  userId?: string | null
+  includeAllWorkspaces?: boolean
+}): Promise<Record<string, number>> {
+  ensureMockStore()
+  const visibleWorkspaceIdSet = new Set(
+    listVisibleWorkspaceIds(options?.userId, {
+      includeAllWorkspaces: options?.includeAllWorkspaces,
+    })
+  )
+
+  const counts: Record<string, number> = {}
+  for (const resource of mockStore ?? []) {
+    if (resource.deletedAt) {
+      continue
+    }
+    if (!visibleWorkspaceIdSet.has(resource.workspaceId)) {
+      continue
+    }
+
+    counts[resource.workspaceId] = (counts[resource.workspaceId] ?? 0) + 1
+  }
+
+  return counts
 }
 
 export async function listMockResourcesIncludingDeleted(): Promise<ResourceCard[]> {
