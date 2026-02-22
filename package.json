@@ -1,6 +1,6 @@
 {
   "name": "my-project",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "main": "dist-electron/main.js",
   "scripts": {
@@ -68,6 +68,7 @@
     "react-dom": "19.2.3",
     "react-hook-form": "^7.54.1",
     "react-resizable-panels": "^2.1.7",
+    "react-window": "^1.8.11",
     "recharts": "2.15.0",
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.5.5",

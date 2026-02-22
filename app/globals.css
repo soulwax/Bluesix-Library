@@ -83,7 +83,16 @@
     --sidebar-accent-foreground: 210 20% 95%;
     --sidebar-border: 220 12% 15%;
     --sidebar-ring: 213 94% 58%;
+    --compact: 0;
+    --compact-gutter: 0.75rem;
+    --compact-row-height: 2.5rem;
   }
+}
+
+[data-compact-mode="true"] {
+  --compact: 1;
+  --compact-gutter: 0.25rem;
+  --compact-row-height: 2rem;
 }
 
 @layer base {

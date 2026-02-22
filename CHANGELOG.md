@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-02-21
+
+### Added
+
+- New `GET /api/library/bootstrap` snapshot endpoint so resources, categories, and workspaces can be loaded in a single request
+- New `Really Compact` mode with runtime toggle, URL sync (`?compact=true`), and persisted local preference
+- Compact top-bar action cluster with icon-first controls for search focus, AI actions (`⚡`), quick add, settings, and mode toggling
+- Ultra-dense compact board mode with collapsed category rows, inline link chips, hover detail flyouts, and virtualized rendering via `react-window`
+
+### Changed
+
+- Page bootstrap and manual refresh now use the snapshot endpoint and wait for auth session hydration to avoid duplicate initial fetches
+- Desktop navigation now supports compact density behavior (narrower workspace rail and compact-mode category navigation flow)
+- Added compact density CSS variables and root compact-mode selectors for consistent spacing/row-height control
+
 ## [0.2.2] - 2026-02-18
 
 ### Added

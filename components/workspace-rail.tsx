@@ -29,6 +29,7 @@ interface WorkspaceRailProps {
   resourceCountsByWorkspace?: Record<string, number>;
   orientation?: WorkspaceRailOrientation;
   isLoading?: boolean;
+  compactMode?: boolean;
 }
 
 function workspaceBadge(workspaceName: string): string {
@@ -60,8 +61,10 @@ export function WorkspaceRail({
   resourceCountsByWorkspace = {},
   orientation = "vertical",
   isLoading = false,
+  compactMode = false,
 }: WorkspaceRailProps) {
   const isVertical = orientation === "vertical";
+  const workspaceButtonSizeClass = compactMode ? "h-8 w-8" : "h-9 w-9";
 
   const sortedWorkspaces = useMemo(() => {
     return [...workspaces].sort((left, right) => {
@@ -84,7 +87,7 @@ export function WorkspaceRail({
       <ScrollArea className={cn("h-full", !isVertical ? "w-full" : undefined)}>
         <div
           className={cn(
-            "flex gap-1.5 p-2",
+            compactMode ? "flex gap-1 p-1" : "flex gap-1.5 p-2",
             isVertical ? "h-full flex-col items-center" : "items-center",
           )}
         >
@@ -93,7 +96,8 @@ export function WorkspaceRail({
                 <Skeleton
                   key={`workspace-skeleton-${index}`}
                   className={cn(
-                    "h-9 w-9 rounded-full",
+                    workspaceButtonSizeClass,
+                    "rounded-full",
                     !isVertical ? "shrink-0" : undefined,
                   )}
                 />
@@ -113,7 +117,8 @@ export function WorkspaceRail({
                         aria-current={isActive ? "page" : undefined}
                         aria-label={workspace.name}
                         className={cn(
-                          "relative flex h-9 w-9 items-center justify-center overflow-hidden border text-xs font-semibold transition-all",
+                          "group/workspace relative flex items-center justify-center overflow-hidden border text-xs font-semibold transition-all",
+                          workspaceButtonSizeClass,
                           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           isActive
                             ? "rounded-xl border-primary bg-primary text-primary-foreground shadow-sm"
@@ -121,6 +126,11 @@ export function WorkspaceRail({
                         )}
                       >
                         <span>{badge}</span>
+                        {compactMode && isVertical ? (
+                          <span className="pointer-events-none absolute left-[calc(100%+0.45rem)] top-1/2 z-20 hidden -translate-y-1/2 whitespace-nowrap rounded-sm border border-border/70 bg-popover px-1.5 py-0.5 text-[10px] font-medium text-popover-foreground opacity-0 transition-opacity group-hover/workspace:opacity-100 group-focus-visible/workspace:opacity-100 md:block">
+                            {workspace.name}
+                          </span>
+                        ) : null}
                         {isSharedWorkspace ? (
                           <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-card bg-emerald-500" />
                         ) : null}
@@ -142,7 +152,8 @@ export function WorkspaceRail({
                   size="icon"
                   disableTooltip
                   className={cn(
-                    "h-9 w-9 rounded-full border border-dashed border-border text-muted-foreground transition-all hover:rounded-xl hover:text-foreground",
+                    workspaceButtonSizeClass,
+                    "rounded-full border border-dashed border-border text-muted-foreground transition-all hover:rounded-xl hover:text-foreground",
                     isVertical ? "mt-1" : undefined,
                   )}
                   onClick={onCreateWorkspace}
@@ -160,7 +171,12 @@ export function WorkspaceRail({
       </ScrollArea>
 
       {showSettingsButton && isVertical ? (
-        <div className="mt-auto flex flex-col items-center border-t border-border/70 pb-2 pt-2">
+        <div
+          className={cn(
+            "mt-auto flex flex-col items-center border-t border-border/70",
+            compactMode ? "pb-1 pt-1" : "pb-2 pt-2",
+          )}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -168,7 +184,10 @@ export function WorkspaceRail({
                 variant="ghost"
                 size="icon"
                 disableTooltip
-                className="h-9 w-9 rounded-full border border-border text-muted-foreground transition-all hover:rounded-xl hover:text-foreground"
+                className={cn(
+                  workspaceButtonSizeClass,
+                  "rounded-full border border-border text-muted-foreground transition-all hover:rounded-xl hover:text-foreground",
+                )}
                 onClick={onOpenSettings}
                 aria-label="Open general settings"
               >
@@ -177,7 +196,12 @@ export function WorkspaceRail({
             </TooltipTrigger>
             <TooltipContent side="right">General settings</TooltipContent>
           </Tooltip>
-          <span className="mt-1 select-none text-[9px] leading-none tracking-wide text-muted-foreground/50">
+          <span
+            className={cn(
+              "select-none leading-none tracking-wide text-muted-foreground/50",
+              compactMode ? "mt-0.5 text-[8px]" : "mt-1 text-[9px]",
+            )}
+          >
             v{pkg.version}
           </span>
         </div>

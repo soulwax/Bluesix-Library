@@ -37,6 +37,7 @@ import {
   type ResourceBoardMoveInput,
 } from "@/components/resource-board";
 import { CategorySidebar } from "@/components/category-sidebar";
+import { CompactModeToggle } from "@/components/compact-mode";
 import { useColorScheme } from "@/components/color-scheme-provider";
 import { WorkspaceRail } from "@/components/workspace-rail";
 import { Button } from "@/components/ui/button";
@@ -95,6 +96,7 @@ import {
   Trash2,
   UserPlus,
   WandSparkles,
+  Zap,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
@@ -120,11 +122,6 @@ interface ResendVerificationResponse extends ApiErrorResponse {
   ok?: boolean;
 }
 
-interface ListResourcesResponse extends ApiErrorResponse {
-  mode?: "database" | "mock";
-  resources?: ResourceCard[];
-}
-
 interface ListCategoriesResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
   categories?: ResourceCategory[];
@@ -132,6 +129,13 @@ interface ListCategoriesResponse extends ApiErrorResponse {
 
 interface ListWorkspacesResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
+  workspaces?: ResourceWorkspace[];
+}
+
+interface LibraryBootstrapResponse extends ApiErrorResponse {
+  mode?: "database" | "mock";
+  resources?: ResourceCard[];
+  categories?: ResourceCategory[];
   workspaces?: ResourceWorkspace[];
 }
 
@@ -357,6 +361,8 @@ const SIDEBAR_KEYBOARD_STEP = SIDEBAR_SNAP_GRID;
 const FALLBACK_VIEWPORT_WIDTH = 1440;
 const SECTION_PREFERENCES_STORAGE_KEY = "section-preferences";
 const GENERAL_SETTINGS_STORAGE_KEY = "general-settings-preferences";
+const REALLY_COMPACT_STORAGE_KEY = "really-compact-mode";
+const COMPACT_QUERY_PARAM = "compact";
 const ASK_LIBRARY_HISTORY_LIMIT = 8;
 const AI_INBOX_MAX_URLS = 25;
 const DEFAULT_SECTION_PREFERENCES: SectionPreferences = {
@@ -717,6 +723,21 @@ function parseGeneralSettingsPreferences(
   }
 }
 
+function parseCompactQueryValue(rawValue: string | null): boolean | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalized = rawValue.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
 export default function Page() {
   const { data: session, status: sessionStatus } = useSession();
   const [resources, setResources] = useState<ResourceCard[]>([]);
@@ -850,6 +871,9 @@ export default function Page() {
     useState<SectionPreferences>(DEFAULT_SECTION_PREFERENCES);
   const [generalSettings, setGeneralSettings] =
     useState<GeneralSettingsPreferences>(DEFAULT_GENERAL_SETTINGS);
+  const [isReallyCompactMode, setIsReallyCompactMode] = useState(false);
+  const [hasHydratedCompactMode, setHasHydratedCompactMode] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const {
     schemes: colorSchemes,
     currentSchemeIndex,
@@ -1015,6 +1039,10 @@ export default function Page() {
     },
     [],
   );
+  const focusSearchInput = useCallback(() => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, []);
 
   const fetchAiPastePreference = useCallback(async () => {
     if (!sessionUserId) {
@@ -1744,30 +1772,36 @@ export default function Page() {
   const activeColorScheme =
     colorSchemes[currentSchemeIndex] ?? colorSchemes[0] ?? null;
 
-  const fetchResources = useCallback(async () => {
+  const loadLibrarySnapshot = useCallback(async () => {
     setIsResourcesLoading(true);
+    setIsCategoriesLoading(true);
+    setIsWorkspacesLoading(true);
     setLoadError(null);
 
     try {
-      const response = await fetch("/api/resources", {
+      const response = await fetch("/api/library/bootstrap", {
         cache: "no-store",
       });
-      const payload = await readJson<ListResourcesResponse>(response);
+      const payload = await readJson<LibraryBootstrapResponse>(response);
 
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Failed to load resources.");
+        throw new Error(payload?.error ?? "Failed to load library.");
       }
 
       setResources(payload?.resources ?? []);
+      setCategoryRecords(payload?.categories ?? []);
+      setWorkspaces(payload?.workspaces ?? []);
       setDataMode(payload?.mode === "database" ? "database" : "mock");
     } catch (error) {
       setLoadError(
         error instanceof Error
           ? error.message
-          : "Failed to load resources. Check the database setup and retry.",
+          : "Failed to load library. Check the database setup and retry.",
       );
     } finally {
       setIsResourcesLoading(false);
+      setIsCategoriesLoading(false);
+      setIsWorkspacesLoading(false);
     }
   }, []);
 
@@ -1824,8 +1858,12 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    void Promise.all([fetchResources(), fetchCategories(), fetchWorkspaces()]);
-  }, [fetchCategories, fetchResources, fetchWorkspaces, sessionUserId]);
+    if (sessionStatus === "loading") {
+      return;
+    }
+
+    void loadLibrarySnapshot();
+  }, [loadLibrarySnapshot, sessionStatus, sessionUserId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1894,6 +1932,68 @@ export default function Page() {
     if (storedGeneralSettings) {
       setGeneralSettings(storedGeneralSettings);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    const compactFromQuery = parseCompactQueryValue(
+      url.searchParams.get(COMPACT_QUERY_PARAM),
+    );
+    const compactFromStorage = parseCompactQueryValue(
+      window.localStorage.getItem(REALLY_COMPACT_STORAGE_KEY),
+    );
+    const nextCompactMode = compactFromQuery ?? compactFromStorage ?? false;
+    setIsReallyCompactMode(nextCompactMode);
+    setHasHydratedCompactMode(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedCompactMode || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      REALLY_COMPACT_STORAGE_KEY,
+      isReallyCompactMode ? "true" : "false",
+    );
+
+    const url = new URL(window.location.href);
+    if (isReallyCompactMode) {
+      url.searchParams.set(COMPACT_QUERY_PARAM, "true");
+    } else {
+      url.searchParams.delete(COMPACT_QUERY_PARAM);
+    }
+
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const nextPath = `${url.pathname}${url.search}${url.hash}`;
+    if (currentPath !== nextPath) {
+      window.history.replaceState({}, "", nextPath || "/");
+    }
+  }, [hasHydratedCompactMode, isReallyCompactMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handlePopState = () => {
+      const url = new URL(window.location.href);
+      const compactFromQuery = parseCompactQueryValue(
+        url.searchParams.get(COMPACT_QUERY_PARAM),
+      );
+      if (compactFromQuery !== null) {
+        setIsReallyCompactMode(compactFromQuery);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
   }, []);
 
   useEffect(() => {
@@ -3316,17 +3416,12 @@ export default function Page() {
     setIsRefreshingLibrary(true);
     void (async () => {
       try {
-        await Promise.all([fetchResources(), fetchCategories(), fetchWorkspaces()]);
+        await loadLibrarySnapshot();
       } finally {
         setIsRefreshingLibrary(false);
       }
     })();
-  }, [
-    fetchCategories,
-    fetchResources,
-    fetchWorkspaces,
-    isRefreshingLibrary,
-  ]);
+  }, [isRefreshingLibrary, loadLibrarySnapshot]);
 
   const handleModalOpenChange = useCallback((open: boolean) => {
     setModalOpen(open);
@@ -4304,12 +4399,28 @@ export default function Page() {
   );
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border bg-card px-4 py-3 lg:px-6">
+    <div
+      className={cn(
+        "flex h-dvh flex-col overflow-hidden",
+        isReallyCompactMode ? "compact-mode" : undefined,
+      )}
+      data-compact-mode={isReallyCompactMode ? "true" : "false"}
+    >
+      <header
+        className={cn(
+          "flex shrink-0 flex-wrap items-center border-b border-border bg-card",
+          isReallyCompactMode
+            ? "sticky top-0 z-40 gap-1 px-2 py-1 backdrop-blur supports-[backdrop-filter]:bg-card/90"
+            : "gap-3 px-4 py-3 lg:px-6",
+        )}
+      >
         <Button
           variant="ghost"
           size="icon"
-          className="text-muted-foreground md:hidden"
+          className={cn(
+            "text-muted-foreground md:hidden",
+            isReallyCompactMode ? "h-8 w-8" : undefined,
+          )}
           onClick={() => setSidebarOpen(true)}
           aria-label="Open workspace and category menu"
         >
@@ -4317,10 +4428,20 @@ export default function Page() {
         </Button>
 
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <BookOpen className="h-4 w-4" />
+          <div
+            className={cn(
+              "flex items-center justify-center rounded-lg bg-primary text-primary-foreground",
+              isReallyCompactMode ? "h-7 w-7" : "h-8 w-8",
+            )}
+          >
+            <BookOpen className={cn(isReallyCompactMode ? "h-3.5 w-3.5" : "h-4 w-4")} />
           </div>
-          <div className="hidden items-center gap-2.5 sm:flex">
+          <div
+            className={cn(
+              "hidden items-center gap-2.5 sm:flex",
+              isReallyCompactMode ? "sm:hidden" : undefined,
+            )}
+          >
             <h1 className="text-base font-semibold leading-tight text-foreground">
               BlueSix
             </h1>
@@ -4346,9 +4467,15 @@ export default function Page() {
           </div>
         </div>
 
-        <div className="relative min-w-48 flex-1">
+        <div
+          className={cn(
+            "relative min-w-48 flex-1",
+            isReallyCompactMode ? "hidden" : undefined,
+          )}
+        >
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchInputRef}
             type="search"
             placeholder="Search resources..."
             value={searchQuery}
@@ -4358,7 +4485,17 @@ export default function Page() {
           />
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div
+          className={cn(
+            "ml-auto flex items-center gap-2",
+            isReallyCompactMode ? "hidden" : undefined,
+          )}
+        >
+          <CompactModeToggle
+            enabled={isReallyCompactMode}
+            onToggle={() => setIsReallyCompactMode((previous) => !previous)}
+          />
+
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm">
@@ -4651,16 +4788,123 @@ export default function Page() {
             </>
           )}
         </div>
+
+        {isReallyCompactMode ? (
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={focusSearchInput}
+              aria-label="Focus search input"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Open AI actions"
+                >
+                  <Zap className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-44 space-y-1 p-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-full justify-start gap-2 text-xs"
+                  onClick={handleOpenAiInbox}
+                  disabled={
+                    isResourcesLoading ||
+                    isAiInboxBusy ||
+                    !canManageResources ||
+                    !activeWorkspaceId
+                  }
+                >
+                  <WandSparkles className="h-3.5 w-3.5" />
+                  AI Inbox
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-full justify-start gap-2 text-xs"
+                  onClick={handleAskLibraryOpen}
+                  disabled={isAskingLibrary || isResourcesLoading}
+                >
+                  <MessageSquareText className="h-3.5 w-3.5" />
+                  Ask Library
+                </Button>
+              </PopoverContent>
+            </Popover>
+
+            {canManageResources ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleOpenCreateResourceModal}
+                disabled={isResourceActionDisabled}
+                aria-label="Add resource"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            ) : null}
+
+            {!isAuthenticated ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => openAuthDialog("login")}
+                aria-label="Sign in"
+              >
+                <LogIn className="h-4 w-4" />
+              </Button>
+            ) : null}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setGeneralSettingsOpen(true)}
+              aria-label="Open settings"
+            >
+              <Settings2 className="h-4 w-4" />
+            </Button>
+
+            <CompactModeToggle
+              enabled={isReallyCompactMode}
+              onToggle={() =>
+                setIsReallyCompactMode((previous) => !previous)
+              }
+            />
+          </div>
+        ) : null}
       </header>
 
       <div className="flex flex-1 overflow-hidden">
         <aside
-          className="hidden w-14 shrink-0 border-r border-border bg-card md:block"
+          className={cn(
+            "hidden shrink-0 border-r border-border bg-card md:block",
+            isReallyCompactMode ? "w-9" : "w-14",
+          )}
           aria-label="Workspace navigation"
         >
           <WorkspaceRail
             workspaces={workspaces}
             activeWorkspaceId={activeWorkspaceId}
+            compactMode={isReallyCompactMode}
             isLoading={isWorkspacesLoading}
             onWorkspaceChange={(workspaceId) => {
               setActiveWorkspaceId(workspaceId);
@@ -4674,67 +4918,72 @@ export default function Page() {
           />
         </aside>
 
-        <aside
-          className={`group/sidebar relative hidden shrink-0 border-r border-border bg-card md:block ${
-            isSidebarResizing
-              ? ""
-              : "transition-[width] duration-200 ease-in-out"
-          }`}
-          style={{ width: `${desktopSidebarWidth}px` }}
-          aria-label="Category navigation"
-        >
-          <CategorySidebar
-            categories={categories}
-            activeCategory={activeCategory}
-            onCategoryChange={setActiveCategory}
-            isLoading={isCategoriesLoading || isWorkspacesLoading}
-            resourceCounts={resourceCounts}
-            categorySymbols={categorySymbols}
-            canManageCategories={canManageCategories}
-            onCreateCategory={handleOpenCreateCategoryDialog}
-            canEditCategory={canEditCategoryByName}
-            onEditCategory={handleOpenEditCategoryDialogByName}
-            onDeleteCategory={(category) => {
-              void handleDeleteCategoryByName(category);
-            }}
-            canPasteIntoCategory={canManageResources && !isPasteFlowInProgress}
-            onPasteIntoCategory={(category) => {
-              setActiveCategory(category);
-              handlePasteIntoCategory(category);
-            }}
-            canDropLinkItems={canManageResources && !isSearchActive}
-            onDropLinkItemToCategory={handleDropLinkItemToSidebarCategory}
-            onOpenWorkspaceSettings={
-              activeWorkspace?.ownerUserId ? handleOpenWorkspaceSettings : undefined
-            }
-            headingLabel={sidebarHeadingLabel}
-            headingMeta={sidebarHeadingMeta}
-            headingCount={categories.length}
-            compactHeading={sectionPreferences.compactTitles}
-            roleHint={
-              sectionPreferences.showRoleHints ? sectionRoleHint : undefined
-            }
-          />
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize categories panel"
-            aria-valuemin={DESKTOP_SIDEBAR_MIN_WIDTH}
-            aria-valuemax={desktopSidebarMaxWidth}
-            aria-valuenow={desktopSidebarWidth}
-            tabIndex={0}
-            onPointerDown={handleDesktopSidebarResizeStart}
-            onKeyDown={handleDesktopSidebarResizeKeyDown}
-            className={`absolute inset-y-0 right-0 z-10 w-4 translate-x-1/2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 after:rounded-full after:transition-colors after:duration-200 after:ease-in-out ${
+        {!isReallyCompactMode ? (
+          <aside
+            className={`group/sidebar relative hidden shrink-0 border-r border-border bg-card md:block ${
               isSidebarResizing
-                ? "after:bg-sidebar-ring"
-                : "after:bg-transparent group-hover/sidebar:after:bg-sidebar-border/50 hover:after:bg-sidebar-border focus-visible:after:bg-sidebar-ring"
+                ? ""
+                : "transition-[width] duration-200 ease-in-out"
             }`}
-          />
-        </aside>
+            style={{ width: `${desktopSidebarWidth}px` }}
+            aria-label="Category navigation"
+          >
+            <CategorySidebar
+              categories={categories}
+              activeCategory={activeCategory}
+              onCategoryChange={setActiveCategory}
+              isLoading={isCategoriesLoading || isWorkspacesLoading}
+              resourceCounts={resourceCounts}
+              categorySymbols={categorySymbols}
+              canManageCategories={canManageCategories}
+              onCreateCategory={handleOpenCreateCategoryDialog}
+              canEditCategory={canEditCategoryByName}
+              onEditCategory={handleOpenEditCategoryDialogByName}
+              onDeleteCategory={(category) => {
+                void handleDeleteCategoryByName(category);
+              }}
+              canPasteIntoCategory={canManageResources && !isPasteFlowInProgress}
+              onPasteIntoCategory={(category) => {
+                setActiveCategory(category);
+                handlePasteIntoCategory(category);
+              }}
+              canDropLinkItems={canManageResources && !isSearchActive}
+              onDropLinkItemToCategory={handleDropLinkItemToSidebarCategory}
+              onOpenWorkspaceSettings={
+                activeWorkspace?.ownerUserId ? handleOpenWorkspaceSettings : undefined
+              }
+              headingLabel={sidebarHeadingLabel}
+              headingMeta={sidebarHeadingMeta}
+              headingCount={categories.length}
+              compactHeading={sectionPreferences.compactTitles}
+              roleHint={
+                sectionPreferences.showRoleHints ? sectionRoleHint : undefined
+              }
+            />
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize categories panel"
+              aria-valuemin={DESKTOP_SIDEBAR_MIN_WIDTH}
+              aria-valuemax={desktopSidebarMaxWidth}
+              aria-valuenow={desktopSidebarWidth}
+              tabIndex={0}
+              onPointerDown={handleDesktopSidebarResizeStart}
+              onKeyDown={handleDesktopSidebarResizeKeyDown}
+              className={`absolute inset-y-0 right-0 z-10 w-4 translate-x-1/2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 after:rounded-full after:transition-colors after:duration-200 after:ease-in-out ${
+                isSidebarResizing
+                  ? "after:bg-sidebar-ring"
+                  : "after:bg-transparent group-hover/sidebar:after:bg-sidebar-border/50 hover:after:bg-sidebar-border focus-visible:after:bg-sidebar-ring"
+              }`}
+            />
+          </aside>
+        ) : null}
 
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-72 p-0">
+          <SheetContent
+            side="left"
+            className={cn("p-0", isReallyCompactMode ? "w-full max-w-full" : "w-72")}
+          >
             <div className="border-b border-border/70 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Workspaces
@@ -4744,6 +4993,7 @@ export default function Page() {
                   workspaces={workspaces}
                   activeWorkspaceId={activeWorkspaceId}
                   orientation="horizontal"
+                  compactMode={isReallyCompactMode}
                   isLoading={isWorkspacesLoading}
                   onWorkspaceChange={(workspaceId) => {
                     setActiveWorkspaceId(workspaceId);
@@ -4814,17 +5064,64 @@ export default function Page() {
         <ContextMenu onOpenChange={handleLibraryContextMenuOpenChange}>
           <ContextMenuTrigger asChild>
             <main
-              className="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6"
+              className={cn(
+                "flex-1 overflow-x-hidden",
+                isReallyCompactMode
+                  ? "flex flex-col overflow-hidden p-1 sm:p-1.5"
+                  : "overflow-y-auto p-4 lg:p-6",
+              )}
               aria-label="Resource cards"
             >
-              <div
-                className={cn(
-                  "mb-5 flex flex-wrap justify-between gap-3 border-b border-border/60",
-                  sectionPreferences.compactTitles
-                    ? "items-start pb-3"
-                    : "items-end pb-4",
-                )}
-              >
+              {isReallyCompactMode ? (
+                <div className="mb-1 flex items-center gap-1 rounded-sm border border-border/60 bg-card/70 px-1 py-1">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <Input
+                    ref={searchInputRef}
+                    type="search"
+                    placeholder="Search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    className="h-7 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0"
+                    aria-label="Search resources"
+                  />
+                  {isSearchActive ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setSearchQuery("")}
+                      aria-label="Clear search"
+                    >
+                      <FilterX className="h-3.5 w-3.5" />
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={handleRefreshLibrary}
+                    disabled={isRefreshingLibrary}
+                    aria-label="Refresh library"
+                  >
+                    <RefreshCw
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        isRefreshingLibrary ? "animate-spin" : "",
+                      )}
+                    />
+                  </Button>
+                </div>
+              ) : (
+                <div
+                  className={cn(
+                    "mb-5 flex flex-wrap justify-between gap-3 border-b border-border/60",
+                    sectionPreferences.compactTitles
+                      ? "items-start pb-3"
+                      : "items-end pb-4",
+                  )}
+                >
                 <div
                   className={cn(
                     "max-w-full",
@@ -4902,29 +5199,45 @@ export default function Page() {
                     ? ` total, ${filteredResources.length} shown`
                     : ""}
                 </p>
-              </div>
-              {showResourceSkeleton ? (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                  {Array.from({ length: 8 }, (_, index) => (
-                    <div
-                      key={`resource-skeleton-${index}`}
-                      className="space-y-4 rounded-xl border border-border/70 bg-card/70 p-4"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <Skeleton className="h-4 w-28" />
-                        <Skeleton className="h-5 w-10 rounded-full" />
-                      </div>
-                      <div className="space-y-2">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-[78%]" />
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Skeleton className="h-6 w-20 rounded-full" />
-                        <Skeleton className="h-6 w-16 rounded-full" />
-                      </div>
-                    </div>
-                  ))}
                 </div>
+              )}
+              {showResourceSkeleton ? (
+                isReallyCompactMode ? (
+                  <div className="space-y-1">
+                    {Array.from({ length: 14 }, (_, index) => (
+                      <div
+                        key={`resource-skeleton-compact-${index}`}
+                        className="flex h-8 items-center gap-1 rounded-sm border border-border/70 bg-card/65 px-1"
+                      >
+                        <Skeleton className="h-4 w-4 rounded-sm" />
+                        <Skeleton className="h-3 w-28" />
+                        <Skeleton className="ml-auto h-3 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {Array.from({ length: 8 }, (_, index) => (
+                      <div
+                        key={`resource-skeleton-${index}`}
+                        className="space-y-4 rounded-xl border border-border/70 bg-card/70 p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <Skeleton className="h-4 w-28" />
+                          <Skeleton className="h-5 w-10 rounded-full" />
+                        </div>
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-full" />
+                          <Skeleton className="h-4 w-[78%]" />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Skeleton className="h-6 w-20 rounded-full" />
+                          <Skeleton className="h-6 w-16 rounded-full" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
               ) : showResourceLoadError ? (
                 <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
                   <h2 className="text-lg font-semibold text-foreground">
@@ -4938,59 +5251,69 @@ export default function Page() {
                   </Button>
                 </div>
               ) : filteredResources.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-secondary text-muted-foreground">
-                    <FolderOpen className="h-8 w-8" />
+                isReallyCompactMode ? (
+                  <div className="flex flex-1 items-center justify-center rounded-sm border border-dashed border-border/60 p-2 text-[11px] text-muted-foreground">
+                    {searchQuery
+                      ? `No matches for \"${searchQuery}\".`
+                      : "No resources in this view."}
                   </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">
-                      {searchQuery ? "No results found" : "No resources yet"}
-                    </h2>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {searchQuery
-                        ? `Nothing matches "${searchQuery}". Try a different search.`
-                        : isAuthenticated && !hasActiveWorkspace
-                          ? "Create your personal workspace to start organizing cards and categories."
-                          : canManageResources
-                            ? "Add your first resource to get started!"
-                            : isAuthenticated
-                              ? "You are signed in as read-only. Ask FirstAdmin for editor or admin access."
-                              : "Sign in to manage categories and resources based on your role."}
-                    </p>
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-secondary text-muted-foreground">
+                      <FolderOpen className="h-8 w-8" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-foreground">
+                        {searchQuery ? "No results found" : "No resources yet"}
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {searchQuery
+                          ? `Nothing matches \"${searchQuery}\". Try a different search.`
+                          : isAuthenticated && !hasActiveWorkspace
+                            ? "Create your personal workspace to start organizing cards and categories."
+                            : canManageResources
+                              ? "Add your first resource to get started!"
+                              : isAuthenticated
+                                ? "You are signed in as read-only. Ask FirstAdmin for editor or admin access."
+                                : "Sign in to manage categories and resources based on your role."}
+                      </p>
+                    </div>
+                    {!searchQuery && isAuthenticated && !hasActiveWorkspace ? (
+                      <Button
+                        onClick={handleOpenCreateWorkspaceDialog}
+                        className="gap-2"
+                        disabled={!canCreateWorkspaces}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Create Workspace
+                      </Button>
+                    ) : null}
+                    {!searchQuery && canManageResources && hasActiveWorkspace ? (
+                      <Button
+                        onClick={handleOpenCreateResourceModal}
+                        className="gap-2"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Resource
+                      </Button>
+                    ) : null}
+                    {!searchQuery && !isAuthenticated ? (
+                      <Button
+                        onClick={() => openAuthDialog("login")}
+                        className="gap-2"
+                      >
+                        <LogIn className="h-4 w-4" />
+                        Sign in
+                      </Button>
+                    ) : null}
                   </div>
-                  {!searchQuery && isAuthenticated && !hasActiveWorkspace ? (
-                    <Button
-                      onClick={handleOpenCreateWorkspaceDialog}
-                      className="gap-2"
-                      disabled={!canCreateWorkspaces}
-                    >
-                      <Plus className="h-4 w-4" />
-                      Create Workspace
-                    </Button>
-                  ) : null}
-                  {!searchQuery && canManageResources && hasActiveWorkspace ? (
-                    <Button
-                      onClick={handleOpenCreateResourceModal}
-                      className="gap-2"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Resource
-                    </Button>
-                  ) : null}
-                  {!searchQuery && !isAuthenticated ? (
-                    <Button
-                      onClick={() => openAuthDialog("login")}
-                      className="gap-2"
-                    >
-                      <LogIn className="h-4 w-4" />
-                      Sign in
-                    </Button>
-                  ) : null}
-                </div>
+                )
               ) : (
                 <ResourceBoard
                   columns={boardColumns}
                   resources={filteredResources}
+                  activeWorkspaceName={workspaceDisplayName}
+                  compactMode={isReallyCompactMode}
                   dragEnabled={canManageResources && !isSearchActive}
                   canManageResource={canManageResourceCard}
                   canEditCategoryByName={canEditCategoryByName}
