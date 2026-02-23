@@ -6,6 +6,7 @@ import { FixedSizeList, type ListOnScrollProps } from "react-window"
 import {
   LINK_ITEM_DRAG_MIME,
   type LinkItemDragPayload,
+  parseLinkItemDragPayload,
   serializeLinkItemDragPayload,
 } from "@/lib/link-item-drag"
 import type { ResourceCard } from "@/lib/resources"
@@ -111,6 +112,26 @@ function setLinkItemDragData(
   )
 }
 
+function resolveDragStateFromDataTransfer(
+  dataTransfer: DataTransfer | null,
+): DragState | null {
+  if (!dataTransfer) {
+    return null
+  }
+
+  const payload = parseLinkItemDragPayload(dataTransfer.getData(LINK_ITEM_DRAG_MIME))
+  if (!payload) {
+    return null
+  }
+
+  return {
+    itemId: payload.itemId,
+    sourceCategoryId: payload.sourceCategoryId,
+    sourceCategoryName: payload.sourceCategoryName,
+    sourceIndex: payload.sourceIndex,
+  }
+}
+
 function DropSlot({
   enabled,
   active,
@@ -124,6 +145,7 @@ function DropSlot({
 }) {
   return (
     <div
+      data-resource-drop-slot="true"
       aria-hidden="true"
       onDragOver={enabled ? onDragOver : undefined}
       onDrop={enabled ? onDrop : undefined}
@@ -539,17 +561,109 @@ export function ResourceBoard({
                 </span>
               </header>
 
-              <div className="flex min-h-16 flex-1 flex-col gap-2 px-1 pb-1">
+              <div
+                className="flex min-h-16 flex-1 flex-col gap-2 px-1 pb-1"
+                onDragOver={
+                  dragEnabled && column.id
+                    ? (event) => {
+                        const columnId = column.id
+                        if (!columnId) {
+                          return
+                        }
+
+                        const target = event.target
+                        if (
+                          target instanceof Element &&
+                          target.closest("[data-resource-drop-slot='true']")
+                        ) {
+                          return
+                        }
+
+                        const currentDragState =
+                          dragState ??
+                          resolveDragStateFromDataTransfer(event.dataTransfer)
+                        if (!currentDragState) {
+                          return
+                        }
+
+                        if (!dragState) {
+                          setDragState(currentDragState)
+                        }
+
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = "move"
+                        setDropTarget((current) =>
+                          current?.categoryId === columnId &&
+                          current.index === items.length
+                            ? current
+                            : {
+                                categoryId: columnId,
+                                categoryName: column.name,
+                                index: items.length,
+                              },
+                        )
+                      }
+                    : undefined
+                }
+                onDrop={
+                  dragEnabled && column.id
+                    ? (event) => {
+                        const columnId = column.id
+                        if (!columnId) {
+                          return
+                        }
+
+                        const target = event.target
+                        if (
+                          target instanceof Element &&
+                          target.closest("[data-resource-drop-slot='true']")
+                        ) {
+                          return
+                        }
+
+                        const currentDragState =
+                          dragState ??
+                          resolveDragStateFromDataTransfer(event.dataTransfer)
+                        if (!currentDragState) {
+                          return
+                        }
+
+                        event.preventDefault()
+                        void onMoveItem({
+                          itemId: currentDragState.itemId,
+                          sourceCategoryId: currentDragState.sourceCategoryId,
+                          sourceCategoryName: currentDragState.sourceCategoryName,
+                          sourceIndex: currentDragState.sourceIndex,
+                          targetCategoryId: columnId,
+                          targetCategoryName: column.name,
+                          targetIndex: items.length,
+                        })
+                        handleDragEnd()
+                      }
+                    : undefined
+                }
+              >
                 <DropSlot
-                  enabled={dragEnabled && Boolean(dragState && column.id)}
+                  enabled={dragEnabled && Boolean(column.id)}
                   active={
                     dropTarget?.categoryId === column.id && dropTarget.index === 0
                   }
                   onDragOver={(event) => {
                     const columnId = column.id
-                    if (!columnId || !dragState) {
+                    if (!columnId) {
                       return
                     }
+
+                    const currentDragState =
+                      dragState ?? resolveDragStateFromDataTransfer(event.dataTransfer)
+                    if (!currentDragState) {
+                      return
+                    }
+
+                    if (!dragState) {
+                      setDragState(currentDragState)
+                    }
+
                     event.preventDefault()
                     event.dataTransfer.dropEffect = "move"
                     setDropTarget((current) =>
@@ -565,15 +679,17 @@ export function ResourceBoard({
                   }}
                   onDrop={(event) => {
                     event.preventDefault()
-                    if (!column.id || !dragState) {
+                    const currentDragState =
+                      dragState ?? resolveDragStateFromDataTransfer(event.dataTransfer)
+                    if (!column.id || !currentDragState) {
                       return
                     }
 
                     void onMoveItem({
-                      itemId: dragState.itemId,
-                      sourceCategoryId: dragState.sourceCategoryId,
-                      sourceCategoryName: dragState.sourceCategoryName,
-                      sourceIndex: dragState.sourceIndex,
+                      itemId: currentDragState.itemId,
+                      sourceCategoryId: currentDragState.sourceCategoryId,
+                      sourceCategoryName: currentDragState.sourceCategoryName,
+                      sourceIndex: currentDragState.sourceIndex,
                       targetCategoryId: column.id,
                       targetCategoryName: column.name,
                       targetIndex: 0,
@@ -647,20 +763,44 @@ export function ResourceBoard({
                             sourceIndex: index,
                           }
                           setLinkItemDragData(event, dragPayload, link.url)
+                          setDragState({
+                            itemId: resource.id,
+                            sourceCategoryId: resolvedCategoryId,
+                            sourceCategoryName: column.name,
+                            sourceIndex: index,
+                          })
+                          setDropTarget({
+                            categoryId: resolvedCategoryId,
+                            categoryName: column.name,
+                            index,
+                          })
                         }}
+                        onLinkDragEnd={handleDragEnd}
                       />
 
                       <DropSlot
-                        enabled={dragEnabled && Boolean(dragState && column.id)}
+                        enabled={dragEnabled && Boolean(column.id)}
                         active={
                           dropTarget?.categoryId === column.id &&
                           dropTarget.index === index + 1
                         }
                         onDragOver={(event) => {
                           const columnId = column.id
-                          if (!columnId || !dragState) {
+                          if (!columnId) {
                             return
                           }
+
+                          const currentDragState =
+                            dragState ??
+                            resolveDragStateFromDataTransfer(event.dataTransfer)
+                          if (!currentDragState) {
+                            return
+                          }
+
+                          if (!dragState) {
+                            setDragState(currentDragState)
+                          }
+
                           event.preventDefault()
                           event.dataTransfer.dropEffect = "move"
                           setDropTarget((current) =>
@@ -676,15 +816,18 @@ export function ResourceBoard({
                         }}
                         onDrop={(event) => {
                           event.preventDefault()
-                          if (!column.id || !dragState) {
+                          const currentDragState =
+                            dragState ??
+                            resolveDragStateFromDataTransfer(event.dataTransfer)
+                          if (!column.id || !currentDragState) {
                             return
                           }
 
                           void onMoveItem({
-                            itemId: dragState.itemId,
-                            sourceCategoryId: dragState.sourceCategoryId,
-                            sourceCategoryName: dragState.sourceCategoryName,
-                            sourceIndex: dragState.sourceIndex,
+                            itemId: currentDragState.itemId,
+                            sourceCategoryId: currentDragState.sourceCategoryId,
+                            sourceCategoryName: currentDragState.sourceCategoryName,
+                            sourceIndex: currentDragState.sourceIndex,
                             targetCategoryId: column.id,
                             targetCategoryName: column.name,
                             targetIndex: index + 1,
