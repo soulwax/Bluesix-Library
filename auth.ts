@@ -10,6 +10,7 @@ import {
   ensureAuthUserForSignIn,
   ensureSuperAdminSeeded,
   findAuthUserByEmail,
+  findAuthUserByUsername,
   findAuthUserById,
   isConfiguredSuperAdminCredentials,
 } from "@/lib/auth-service";
@@ -78,7 +79,8 @@ export const authOptions: NextAuthOptions = {
               return {
                 id: profile.id.toString(),
                 name: profile.name ?? profile.login,
-                email: profile.email, // This should be the primary email
+                email: profile.email || `${profile.login}@github.local`, // Fallback if email private
+                username: profile.login, // Capture GitHub username
                 image: profile.avatar_url,
               };
             },
@@ -165,26 +167,70 @@ export const authOptions: NextAuthOptions = {
         console.log("[auth] signIn callback triggered", {
           provider: account?.provider,
           userEmail: user.email,
+          username: user.username,
           userId: user.id,
         });
-
-        const identifier = user.email?.trim().toLowerCase();
-        if (!identifier) {
-          console.error("[auth] signIn failed: no email provided by OAuth provider");
-          return false;
-        }
 
         const isCredentialsSignIn = account?.provider === "credentials";
         const isGitHubSignIn = account?.provider === "github";
 
-        const { user: syncedUser } = await ensureAuthUserForSignIn(identifier, {
-          allowCreate: !isCredentialsSignIn,
-          autoVerifyEmail: isGitHubSignIn,
-          requireVerifiedEmail: isCredentialsSignIn,
-        });
+        let syncedUser;
+
+        if (isGitHubSignIn && user.username) {
+          // GitHub OAuth: use username as primary identifier
+          const username = user.username.trim().toLowerCase();
+          const email = user.email?.trim().toLowerCase() || `${username}@github.local`;
+
+          // Check if user exists by username first
+          const { user: existingUser } = await findAuthUserByUsername(username);
+
+          if (existingUser) {
+            syncedUser = existingUser;
+          } else {
+            // Create new user with username via auth service
+            const { mode } = await ensureAuthUserForSignIn(email, {
+              allowCreate: true,
+              autoVerifyEmail: true,
+              requireVerifiedEmail: false,
+            });
+
+            // Update to use username-based lookup for GitHub users
+            if (mode === "database") {
+              const { ensureUserByUsername } = await import("@/lib/auth-repository");
+              syncedUser = await ensureUserByUsername(
+                username,
+                email,
+                null,
+                { emailVerifiedAt: new Date() }
+              );
+            } else {
+              // Mock mode: use email-based for now
+              const { user: mockUser } = await ensureAuthUserForSignIn(email, {
+                allowCreate: true,
+                autoVerifyEmail: true,
+              });
+              syncedUser = mockUser;
+            }
+          }
+        } else {
+          // Credentials sign-in: use email
+          const identifier = user.email?.trim().toLowerCase();
+          if (!identifier) {
+            console.error("[auth] signIn failed: no email provided");
+            return false;
+          }
+
+          const { user: emailUser } = await ensureAuthUserForSignIn(identifier, {
+            allowCreate: !isCredentialsSignIn,
+            autoVerifyEmail: false,
+            requireVerifiedEmail: isCredentialsSignIn,
+          });
+          syncedUser = emailUser;
+        }
 
         user.id = syncedUser.id;
         user.email = syncedUser.email;
+        user.username = syncedUser.username;
         user.role = syncedUser.role;
         user.isAdmin = syncedUser.isAdmin;
         user.isFirstAdmin = syncedUser.isFirstAdmin;
@@ -192,6 +238,7 @@ export const authOptions: NextAuthOptions = {
         console.log("[auth] signIn successful", {
           userId: user.id,
           email: user.email,
+          username: user.username,
           role: user.role,
         });
 
@@ -224,6 +271,10 @@ export const authOptions: NextAuthOptions = {
         token.email = user.email;
       }
 
+      if (user?.username !== undefined) {
+        token.username = user.username;
+      }
+
       if (user?.id) {
         token.authStateRefreshedAt = now;
       }
@@ -252,6 +303,7 @@ export const authOptions: NextAuthOptions = {
           token.isAdmin = authUser.isAdmin;
           token.isFirstAdmin = authUser.isFirstAdmin;
           token.email = authUser.email;
+          token.username = authUser.username;
         }
 
         token.authStateRefreshedAt = now;
@@ -267,6 +319,7 @@ export const authOptions: NextAuthOptions = {
           session.user.id = token.sub;
         }
 
+        session.user.username = token.username ?? null;
         session.user.role = deriveUserRole({
           role: typeof token.role === "string" ? token.role : null,
           isAdmin: token.isAdmin === true,

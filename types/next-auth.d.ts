@@ -5,6 +5,7 @@ declare module "next-auth" {
   interface Session {
     user?: DefaultSession["user"] & {
       id: string
+      username?: string | null
       role: UserRole
       isAdmin: boolean
       isFirstAdmin: boolean
@@ -13,6 +14,7 @@ declare module "next-auth" {
 
   interface User {
     id: string
+    username?: string | null
     role?: UserRole
     isAdmin?: boolean
     isFirstAdmin?: boolean
@@ -22,6 +24,7 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
   interface JWT {
     userId?: string
+    username?: string | null
     role?: UserRole
     isAdmin?: boolean
     isFirstAdmin?: boolean

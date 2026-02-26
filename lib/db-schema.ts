@@ -233,6 +233,7 @@ export const appUsers = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     email: text("email").notNull(),
+    username: text("username"),
     passwordHash: text("password_hash"),
     role: text("role").default("editor").notNull(),
     isAdmin: boolean("is_admin").default(false).notNull(),
@@ -245,10 +246,17 @@ export const appUsers = pgTable(
   (table) => [
     check("app_users_email_length_check", sql`char_length(${table.email}) <= 320`),
     check(
+      "app_users_username_length_check",
+      sql`${table.username} IS NULL OR char_length(${table.username}) <= 39`
+    ),
+    check(
       "app_users_role_check",
       sql`${table.role} IN ('viewer', 'editor', 'admin', 'first_admin')`
     ),
     uniqueIndex("app_users_email_lower_idx").on(sql`lower(${table.email})`),
+    uniqueIndex("app_users_username_lower_idx")
+      .on(sql`lower(${table.username})`)
+      .where(sql`${table.username} IS NOT NULL`),
     uniqueIndex("app_users_single_first_admin_idx")
       .on(table.isFirstAdmin)
       .where(sql`${table.isFirstAdmin} = true`),

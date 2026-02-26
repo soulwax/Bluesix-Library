@@ -9,6 +9,7 @@ import { ensureSchema, getDb } from "@/lib/db"
 export interface AuthUserRecord {
   id: string
   email: string
+  username: string | null
   passwordHash: string | null
   role: UserRole
   isAdmin: boolean
@@ -42,6 +43,7 @@ export interface EmailVerificationTokenRecord {
 type AuthUserRow = {
   id: string
   email: string
+  username: string | null
   passwordHash: string | null
   role: string
   isAdmin: boolean
@@ -93,6 +95,7 @@ function normalizeRow(row: AuthUserRow): AuthUserRecord {
   return {
     id: row.id,
     email: row.email,
+    username: row.username,
     passwordHash: row.passwordHash,
     role,
     isAdmin: row.isAdmin,
@@ -148,6 +151,7 @@ async function selectUserByPredicate(predicate: SQL) {
     .select({
       id: appUsers.id,
       email: appUsers.email,
+      username: appUsers.username,
       passwordHash: appUsers.passwordHash,
       role: appUsers.role,
       isAdmin: appUsers.isAdmin,
@@ -171,6 +175,12 @@ export async function findUserByEmail(
   return selectUserByPredicate(sql`lower(${appUsers.email}) = ${email.toLowerCase()}`)
 }
 
+export async function findUserByUsername(
+  username: string
+): Promise<AuthUserRecord | null> {
+  return selectUserByPredicate(sql`lower(${appUsers.username}) = ${username.toLowerCase()}`)
+}
+
 export async function findUserById(id: string): Promise<AuthUserRecord | null> {
   return selectUserByPredicate(eq(appUsers.id, id))
 }
@@ -191,19 +201,21 @@ export async function hasFirstAdmin(): Promise<boolean> {
 export async function createUser(
   email: string,
   passwordHash: string | null,
-  options?: { emailVerifiedAt?: Date | null; role?: UserRole }
+  options?: { emailVerifiedAt?: Date | null; role?: UserRole; username?: string | null }
 ): Promise<AuthUserRecord> {
   await ensureSchema()
   const db = getDb()
 
   const emailVerifiedAt = options?.emailVerifiedAt ?? null
   const role = options?.role ?? "editor"
+  const username = options?.username ?? null
 
   try {
     const rows = await db
       .insert(appUsers)
       .values({
         email: email.toLowerCase(),
+        username,
         passwordHash,
         role,
         emailVerifiedAt,
@@ -211,6 +223,7 @@ export async function createUser(
       .returning({
         id: appUsers.id,
         email: appUsers.email,
+        username: appUsers.username,
         passwordHash: appUsers.passwordHash,
         role: appUsers.role,
         isAdmin: appUsers.isAdmin,
@@ -235,7 +248,7 @@ export async function createUser(
 export async function ensureUserByEmail(
   email: string,
   passwordHash: string | null = null,
-  options?: { emailVerifiedAt?: Date | null; role?: UserRole }
+  options?: { emailVerifiedAt?: Date | null; role?: UserRole; username?: string | null }
 ): Promise<AuthUserRecord> {
   const existing = await findUserByEmail(email)
   if (existing) {
@@ -243,6 +256,20 @@ export async function ensureUserByEmail(
   }
 
   return createUser(email, passwordHash, options)
+}
+
+export async function ensureUserByUsername(
+  username: string,
+  email: string,
+  passwordHash: string | null = null,
+  options?: { emailVerifiedAt?: Date | null; role?: UserRole }
+): Promise<AuthUserRecord> {
+  const existing = await findUserByUsername(username)
+  if (existing) {
+    return existing
+  }
+
+  return createUser(email, passwordHash, { ...options, username })
 }
 
 export async function markUserAsAdmin(userId: string): Promise<AuthUserRecord> {
@@ -443,6 +470,7 @@ export async function markUserAsFirstAdmin(
       .returning({
         id: appUsers.id,
         email: appUsers.email,
+        username: appUsers.username,
         passwordHash: appUsers.passwordHash,
         role: appUsers.role,
         isAdmin: appUsers.isAdmin,

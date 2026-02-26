@@ -7,7 +7,9 @@ import {
   createEmailVerificationToken as createDbEmailVerificationToken,
   createUser as createDbUser,
   ensureUserByEmail as ensureDbUserByEmail,
+  ensureUserByUsername as ensureDbUserByUsername,
   findUserByEmail as findDbUser,
+  findUserByUsername as findDbUserByUsername,
   findUserById as findDbUserById,
   hasFirstAdmin as hasDbFirstAdmin,
   listUsers as listDbUsers,
@@ -69,6 +71,7 @@ export class InvalidEmailVerificationTokenError extends Error {
 }
 
 const mockUsersByEmail = new Map<string, AuthUserRecord>()
+const mockUsersByUsername = new Map<string, AuthUserRecord>()
 const mockVerificationTokensByHash = new Map<string, VerifyTokenRecord>()
 let superAdminBootstrap: Promise<void> | null = null
 
@@ -80,6 +83,7 @@ function cloneUserRecord(user: AuthUserRecord): AuthUserRecord {
   return {
     id: user.id,
     email: user.email,
+    username: user.username,
     passwordHash: user.passwordHash,
     role: user.role,
     isAdmin: user.isAdmin,
@@ -347,6 +351,7 @@ async function ensureMockSuperAdminSeeded(username: string, password: string) {
   mockUsersByEmail.set(username, {
     id: crypto.randomUUID(),
     email: username,
+    username: null,
     passwordHash,
     role: "first_admin",
     isAdmin: true,
@@ -429,6 +434,29 @@ export async function findAuthUserByEmail(identifier: string): Promise<{
   }
 }
 
+export async function findAuthUserByUsername(username: string): Promise<{
+  mode: AuthDataMode
+  user: AuthUserRecord | null
+}> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedUsername = normalizeIdentifier(username)
+
+  if (mode === "database") {
+    return {
+      mode,
+      user: await findDbUserByUsername(normalizedUsername),
+    }
+  }
+
+  const user = mockUsersByUsername.get(normalizedUsername) ?? null
+  return {
+    mode,
+    user: user ? cloneUserRecord(user) : null,
+  }
+}
+
 export async function findAuthUserById(id: string): Promise<{
   mode: AuthDataMode
   user: AuthUserRecord | null
@@ -493,6 +521,7 @@ export async function registerAuthUser(
   const user: AuthUserRecord = {
     id: crypto.randomUUID(),
     email: normalizedEmail,
+    username: null,
     passwordHash,
     role: "editor",
     isAdmin: false,
@@ -682,6 +711,7 @@ export async function ensureAuthUserForSignIn(
     user = {
       id: crypto.randomUUID(),
       email: normalizedIdentifier,
+      username: null,
       passwordHash: null,
       role: "editor",
       isAdmin: false,
