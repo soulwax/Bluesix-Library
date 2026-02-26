@@ -67,6 +67,21 @@ export const authOptions: NextAuthOptions = {
           GitHubProvider({
             clientId: githubClientId,
             clientSecret: githubClientSecret,
+            profile(profile) {
+              // GitHub can return multiple emails. We want the primary, verified one.
+              console.log("[auth] GitHub profile received:", {
+                id: profile.id,
+                email: profile.email,
+                login: profile.login,
+              });
+
+              return {
+                id: profile.id.toString(),
+                name: profile.name ?? profile.login,
+                email: profile.email, // This should be the primary email
+                image: profile.avatar_url,
+              };
+            },
           }),
         ]
       : []),
