@@ -91,6 +91,10 @@ export async function POST(request: Request) {
       return errorResponse(error.message, 409)
     }
 
-    return errorResponse("Unexpected server error.", 500)
+    console.error("[move-items] Unexpected error:", error)
+    return errorResponse(
+      error instanceof Error ? error.message : "Unexpected server error.",
+      500
+    )
   }
 }
