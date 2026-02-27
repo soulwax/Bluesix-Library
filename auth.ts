@@ -222,7 +222,11 @@ export const authOptions: NextAuthOptions = {
 
         return true;
       } catch (error) {
-        console.error("[auth] signIn callback error:", error);
+        console.error("[auth] signIn callback error:", {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          error,
+        });
         return false;
       }
     },
