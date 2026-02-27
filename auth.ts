@@ -182,14 +182,35 @@ export const authOptions: NextAuthOptions = {
           const username = user.username.trim().toLowerCase();
           const email = user.email?.trim().toLowerCase() || `${username}@github.local`;
 
-          // Ensure user by username (creates if doesn't exist)
-          const { user: githubUser } = await ensureAuthUserByUsername(
-            username,
-            email,
-            null,
-            { emailVerifiedAt: new Date() }
-          );
-          syncedUser = githubUser;
+          // Check if user exists by username first
+          const { user: existingByUsername } = await findAuthUserByUsername(username);
+
+          if (existingByUsername) {
+            // User already exists with this username
+            syncedUser = existingByUsername;
+          } else {
+            // Check if user exists by email (to link existing accounts)
+            const { user: existingByEmail } = await findAuthUserByEmail(email);
+
+            if (existingByEmail && !existingByEmail.username) {
+              // Found existing account by email without username - link it
+              const { updateAuthUserUsername } = await import("@/lib/auth-service");
+              const { user: updatedUser } = await updateAuthUserUsername(
+                existingByEmail.id,
+                username
+              );
+              syncedUser = updatedUser;
+            } else {
+              // Create new user with username
+              const { user: newUser } = await ensureAuthUserByUsername(
+                username,
+                email,
+                null,
+                { emailVerifiedAt: new Date() }
+              );
+              syncedUser = newUser;
+            }
+          }
         } else {
           // Credentials sign-in: use email
           const identifier = user.email?.trim().toLowerCase();

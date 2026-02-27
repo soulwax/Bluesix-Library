@@ -20,6 +20,7 @@ import {
   type AuthUserRecord,
   updateUserRole as updateDbUserRole,
   updateUserPasswordHash as updateDbUserPasswordHash,
+  updateUserUsername as updateDbUserUsername,
   UserAlreadyExistsError,
   UserNotFoundError,
 } from "@/lib/auth-repository"
@@ -933,6 +934,41 @@ export async function updateAuthUserRole(
   targetUser.isAdmin = role === "admin" || role === "first_admin"
   targetUser.isFirstAdmin = role === "first_admin"
   mockUsersByEmail.set(targetUser.email, targetUser)
+
+  return {
+    mode,
+    user: cloneUserRecord(targetUser),
+  }
+}
+
+export async function updateAuthUserUsername(
+  userId: string,
+  username: string
+): Promise<{ mode: AuthDataMode; user: AuthUserRecord }> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedUsername = normalizeIdentifier(username)
+
+  if (mode === "database") {
+    const user = await updateDbUserUsername(userId, normalizedUsername)
+    return { mode, user }
+  }
+
+  const targetUser = [...mockUsersByEmail.values()].find((user) => user.id === userId)
+  if (!targetUser) {
+    throw new UserNotFoundError(userId)
+  }
+
+  // Remove old username mapping if it exists
+  if (targetUser.username) {
+    mockUsersByUsername.delete(normalizeIdentifier(targetUser.username))
+  }
+
+  // Update username
+  targetUser.username = normalizedUsername
+  mockUsersByEmail.set(targetUser.email, targetUser)
+  mockUsersByUsername.set(normalizedUsername, targetUser)
 
   return {
     mode,

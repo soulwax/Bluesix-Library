@@ -311,6 +311,36 @@ export async function updateUserPasswordHash(
     .returning({
       id: appUsers.id,
       email: appUsers.email,
+      username: appUsers.username,
+      passwordHash: appUsers.passwordHash,
+      role: appUsers.role,
+      isAdmin: appUsers.isAdmin,
+      isFirstAdmin: appUsers.isFirstAdmin,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
+    })
+
+  if (rows.length === 0) {
+    throw new UserNotFoundError(userId)
+  }
+
+  return normalizeRow(rows[0] as AuthUserRow)
+}
+
+export async function updateUserUsername(
+  userId: string,
+  username: string
+): Promise<AuthUserRecord> {
+  await ensureSchema()
+  const db = getDb()
+
+  const rows = await db
+    .update(appUsers)
+    .set({ username: username.toLowerCase() })
+    .where(eq(appUsers.id, userId))
+    .returning({
+      id: appUsers.id,
+      email: appUsers.email,
+      username: appUsers.username,
       passwordHash: appUsers.passwordHash,
       role: appUsers.role,
       isAdmin: appUsers.isAdmin,
