@@ -7,6 +7,7 @@ import { z } from "zod";
 import { deriveUserRole } from "@/lib/authorization";
 import {
   EmailNotVerifiedError,
+  ensureAuthUserByUsername,
   ensureAuthUserForSignIn,
   ensureSuperAdminSeeded,
   findAuthUserByEmail,
@@ -181,37 +182,14 @@ export const authOptions: NextAuthOptions = {
           const username = user.username.trim().toLowerCase();
           const email = user.email?.trim().toLowerCase() || `${username}@github.local`;
 
-          // Check if user exists by username first
-          const { user: existingUser } = await findAuthUserByUsername(username);
-
-          if (existingUser) {
-            syncedUser = existingUser;
-          } else {
-            // Create new user with username via auth service
-            const { mode } = await ensureAuthUserForSignIn(email, {
-              allowCreate: true,
-              autoVerifyEmail: true,
-              requireVerifiedEmail: false,
-            });
-
-            // Update to use username-based lookup for GitHub users
-            if (mode === "database") {
-              const { ensureUserByUsername } = await import("@/lib/auth-repository");
-              syncedUser = await ensureUserByUsername(
-                username,
-                email,
-                null,
-                { emailVerifiedAt: new Date() }
-              );
-            } else {
-              // Mock mode: use email-based for now
-              const { user: mockUser } = await ensureAuthUserForSignIn(email, {
-                allowCreate: true,
-                autoVerifyEmail: true,
-              });
-              syncedUser = mockUser;
-            }
-          }
+          // Ensure user by username (creates if doesn't exist)
+          const { user: githubUser } = await ensureAuthUserByUsername(
+            username,
+            email,
+            null,
+            { emailVerifiedAt: new Date() }
+          );
+          syncedUser = githubUser;
         } else {
           // Credentials sign-in: use email
           const identifier = user.email?.trim().toLowerCase();

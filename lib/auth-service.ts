@@ -457,6 +457,54 @@ export async function findAuthUserByUsername(username: string): Promise<{
   }
 }
 
+export async function ensureAuthUserByUsername(
+  username: string,
+  email: string,
+  passwordHash: string | null = null,
+  options?: { emailVerifiedAt?: Date | null; role?: UserRole }
+): Promise<{
+  mode: AuthDataMode
+  user: AuthUserRecord
+}> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedUsername = normalizeIdentifier(username)
+  const normalizedEmail = normalizeIdentifier(email)
+
+  if (mode === "database") {
+    return {
+      mode,
+      user: await ensureDbUserByUsername(
+        normalizedUsername,
+        normalizedEmail,
+        passwordHash,
+        options
+      ),
+    }
+  }
+
+  // Mock mode: check username first
+  let user = mockUsersByUsername.get(normalizedUsername)
+  if (user) {
+    return {
+      mode,
+      user: cloneUserRecord(user),
+    }
+  }
+
+  // Create new mock user
+  user = createMockUser(normalizedEmail, passwordHash, options)
+  user.username = normalizedUsername
+  mockUsersByEmail.set(normalizedEmail, user)
+  mockUsersByUsername.set(normalizedUsername, user)
+
+  return {
+    mode,
+    user: cloneUserRecord(user),
+  }
+}
+
 export async function findAuthUserById(id: string): Promise<{
   mode: AuthDataMode
   user: AuthUserRecord | null
