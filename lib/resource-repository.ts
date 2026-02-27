@@ -12,7 +12,7 @@ import {
   sql,
 } from "drizzle-orm";
 
-import { ensureSchema, getDb } from "@/lib/db";
+import { ensureSchema, getDb, getUnpooledDb } from "@/lib/db";
 import {
   appUsers,
   resourceAuditLogs,
@@ -2492,7 +2492,8 @@ export async function moveResourceItem(
   options?: { actorUserId?: string | null; includeAllWorkspaces?: boolean },
 ): Promise<MoveResourceItemResult> {
   await ensureSchema();
-  const db = getDb();
+  // Use unpooled connection for transaction support
+  const db = getUnpooledDb();
 
   const normalizedItemId = normalizeAndValidateUuid(input.itemId, "Item ID");
   const normalizedSourceCategoryId = normalizeAndValidateUuid(

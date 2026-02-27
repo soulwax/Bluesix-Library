@@ -1,15 +1,22 @@
 import "server-only";
 
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig, Pool } from "@neondatabase/serverless";
 import type { NeonQueryFunction } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle as drizzleHttp } from "drizzle-orm/neon-http";
+import { drizzle as drizzleServerless } from "drizzle-orm/neon-serverless";
 import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
+import type { NeonDatabase } from "drizzle-orm/neon-serverless";
+import ws from "ws";
 
 import { getDatabaseEnv } from "@/lib/env";
 import * as schema from "@/lib/db-schema";
 
+// Configure WebSocket for neon-serverless (for transactions)
+neonConfig.webSocketConstructor = ws;
+
 let sqlClient: NeonQueryFunction<false, false> | null = null;
 let dbClient: NeonHttpDatabase<typeof schema> | null = null;
+let unpooledDbClient: NeonDatabase<typeof schema> | null = null;
 let schemaReady: Promise<void> | null = null;
 const FAVICON_CACHE_LAST_CHECKED_AT_INDEX_REGCLASS =
   "public.favicon_cache_last_checked_at_idx";
@@ -29,13 +36,29 @@ export function getDb(): NeonHttpDatabase<typeof schema> {
     return dbClient;
   }
 
-  dbClient = drizzle(getSql(), { schema });
+  dbClient = drizzleHttp(getSql(), { schema });
   return dbClient;
+}
+
+/**
+ * Get unpooled database client with transaction support.
+ * Use this for operations that require transactions (e.g., moving items).
+ */
+export function getUnpooledDb(): NeonDatabase<typeof schema> {
+  if (unpooledDbClient !== null) {
+    return unpooledDbClient;
+  }
+
+  const { DATABASE_URL_UNPOOLED } = getDatabaseEnv();
+  const pool = new Pool({ connectionString: DATABASE_URL_UNPOOLED });
+  unpooledDbClient = drizzleServerless(pool, { schema });
+  return unpooledDbClient;
 }
 
 export function resetDatabaseClientForTests() {
   sqlClient = null;
   dbClient = null;
+  unpooledDbClient = null;
   schemaReady = null;
 }
 
