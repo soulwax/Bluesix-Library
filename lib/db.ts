@@ -18,8 +18,7 @@ let sqlClient: NeonQueryFunction<false, false> | null = null;
 let dbClient: NeonHttpDatabase<typeof schema> | null = null;
 let unpooledDbClient: NeonDatabase<typeof schema> | null = null;
 let schemaReady: Promise<void> | null = null;
-const FAVICON_CACHE_LAST_CHECKED_AT_INDEX_REGCLASS =
-  "public.favicon_cache_last_checked_at_idx";
+const SCHEMA_READY_MARKER_REGCLASS = "public.password_reset_tokens_token_hash_idx";
 
 function getSql(): NeonQueryFunction<false, false> {
   if (sqlClient !== null) {
@@ -62,11 +61,11 @@ export function resetDatabaseClientForTests() {
   schemaReady = null;
 }
 
-async function hasFaviconCacheReadyMarker(
+async function hasSchemaReadyMarker(
   sql: NeonQueryFunction<false, false>,
 ): Promise<boolean> {
   const rows = await sql`
-    SELECT to_regclass(${FAVICON_CACHE_LAST_CHECKED_AT_INDEX_REGCLASS})::text AS marker_name
+    SELECT to_regclass(${SCHEMA_READY_MARKER_REGCLASS})::text AS marker_name
   `;
   const markerName = (
     rows[0] as { marker_name?: string | null } | undefined
@@ -83,7 +82,7 @@ export async function ensureSchema() {
   const sql = getSql();
 
   schemaReady = (async () => {
-    if (await hasFaviconCacheReadyMarker(sql)) {
+    if (await hasSchemaReadyMarker(sql)) {
       return;
     }
 
@@ -720,6 +719,32 @@ export async function ensureSchema() {
     await sql`
       CREATE UNIQUE INDEX IF NOT EXISTS email_verification_tokens_token_hash_idx
       ON email_verification_tokens (token_hash)
+    `;
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL CHECK (char_length(token_hash) = 64),
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS password_reset_tokens_user_id_idx
+      ON password_reset_tokens (user_id)
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS password_reset_tokens_expires_at_idx
+      ON password_reset_tokens (expires_at)
+    `;
+
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS password_reset_tokens_token_hash_idx
+      ON password_reset_tokens (token_hash)
     `;
 
     await sql`

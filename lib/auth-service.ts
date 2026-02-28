@@ -4,7 +4,9 @@ import { createHash, randomBytes, randomUUID } from "node:crypto"
 
 import {
   consumeEmailVerificationToken as consumeDbEmailVerificationToken,
+  consumePasswordResetToken as consumeDbPasswordResetToken,
   createEmailVerificationToken as createDbEmailVerificationToken,
+  createPasswordResetToken as createDbPasswordResetToken,
   createUser as createDbUser,
   ensureUserByEmail as ensureDbUserByEmail,
   ensureUserByUsername as ensureDbUserByUsername,
@@ -31,13 +33,14 @@ import { hashPassword, verifyPassword } from "@/lib/password"
 export type AuthDataMode = "database" | "mock"
 
 const EMAIL_VERIFICATION_TTL_MINUTES = 60 * 24
+const PASSWORD_RESET_TTL_MINUTES = 60
 
 interface VerificationEmailDelivery {
   mode: "resend" | "mock"
   previewUrl?: string
 }
 
-interface VerifyTokenRecord {
+interface AuthTokenRecord {
   userId: string
   tokenHash: string
   expiresAt: string
@@ -71,9 +74,17 @@ export class InvalidEmailVerificationTokenError extends Error {
   }
 }
 
+export class InvalidPasswordResetTokenError extends Error {
+  constructor() {
+    super("Password reset token is invalid or expired.")
+    this.name = "InvalidPasswordResetTokenError"
+  }
+}
+
 const mockUsersByEmail = new Map<string, AuthUserRecord>()
 const mockUsersByUsername = new Map<string, AuthUserRecord>()
-const mockVerificationTokensByHash = new Map<string, VerifyTokenRecord>()
+const mockVerificationTokensByHash = new Map<string, AuthTokenRecord>()
+const mockPasswordResetTokensByHash = new Map<string, AuthTokenRecord>()
 let superAdminBootstrap: Promise<void> | null = null
 
 function normalizeIdentifier(identifier: string): string {
@@ -109,7 +120,7 @@ function getConfiguredSuperAdmin(): { username: string; password: string } | nul
   }
 }
 
-function getEmailVerificationBaseUrl(): string {
+function getAuthEmailBaseUrl(): string {
   const explicit =
     process.env.EMAIL_VERIFICATION_BASE_URL?.trim() ||
     process.env.NEXTAUTH_URL?.trim()
@@ -146,8 +157,29 @@ function getEmailVerificationExpiryDate(): Date {
 }
 
 function buildEmailVerificationUrl(token: string): string {
-  const baseUrl = getEmailVerificationBaseUrl()
+  const baseUrl = getAuthEmailBaseUrl()
   const url = new URL("/api/auth/verify-email", `${baseUrl}/`)
+  url.searchParams.set("token", token)
+  return url.toString()
+}
+
+function hashPasswordResetToken(token: string): string {
+  return hashEmailVerificationToken(token)
+}
+
+function generatePasswordResetToken(): string {
+  return generateEmailVerificationToken()
+}
+
+function getPasswordResetExpiryDate(): Date {
+  const expiresAt = new Date()
+  expiresAt.setMinutes(expiresAt.getMinutes() + PASSWORD_RESET_TTL_MINUTES)
+  return expiresAt
+}
+
+function buildPasswordResetUrl(token: string): string {
+  const baseUrl = getAuthEmailBaseUrl()
+  const url = new URL("/reset-password", `${baseUrl}/`)
   url.searchParams.set("token", token)
   return url.toString()
 }
@@ -269,6 +301,113 @@ async function sendEmailVerificationEmail(
   }
 }
 
+async function sendPasswordResetEmail(
+  recipientEmail: string,
+  resetUrl: string
+): Promise<VerificationEmailDelivery> {
+  const resendApiKey = process.env.RESEND_API_KEY?.trim()
+  const fromAddress = getEmailFromAddress()
+
+  if (!resendApiKey || !fromAddress) {
+    console.info(`[auth] password reset email fallback for ${recipientEmail}: ${resetUrl}`)
+    return {
+      mode: "mock",
+      previewUrl: resetUrl,
+    }
+  }
+
+  const expiryMinutes = PASSWORD_RESET_TTL_MINUTES
+  const entityRefId = randomBytes(16).toString("hex")
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Reset your lib.bluesix password</title>
+</head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:8px;border:1px solid #e2e8f0;">
+        <tr><td style="padding:32px 40px 0;">
+          <p style="margin:0;font-size:13px;font-weight:600;color:#64748b;letter-spacing:0.06em;text-transform:uppercase;">lib.bluesix</p>
+        </td></tr>
+        <tr><td style="padding:24px 40px 32px;">
+          <h1 style="margin:0 0 16px;font-size:22px;font-weight:700;line-height:1.3;color:#0f172a;">Reset your password</h1>
+          <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#334155;">Use the button below to choose a new password for your account.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
+            <tr><td style="background:#0f172a;border-radius:6px;">
+              <a href="${resetUrl}" style="display:inline-block;padding:13px 28px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">Reset password</a>
+            </td></tr>
+          </table>
+          <p style="margin:0 0 6px;font-size:13px;color:#64748b;">If the button does not work, copy and paste this URL into your browser:</p>
+          <p style="margin:0;font-size:12px;word-break:break-all;"><a href="${resetUrl}" style="color:#0f172a;">${resetUrl}</a></p>
+        </td></tr>
+        <tr><td style="padding:0 40px;"><hr style="border:none;border-top:1px solid #e2e8f0;margin:0;"></td></tr>
+        <tr><td style="padding:20px 40px 28px;">
+          <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">This link expires in ${expiryMinutes} minutes. If you did not request a password reset, you can safely ignore this email.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+  const text = [
+    "lib.bluesix — Reset your password",
+    "",
+    "Use this link to choose a new password:",
+    "",
+    resetUrl,
+    "",
+    `This link expires in ${expiryMinutes} minutes.`,
+    "If you did not request a password reset, you can safely ignore this email.",
+  ].join("\n")
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: [recipientEmail],
+        subject: "Reset your lib.bluesix password",
+        html,
+        text,
+        headers: {
+          "X-Entity-Ref-ID": entityRefId,
+        },
+        tags: [{ name: "category", value: "password-reset" }],
+      }),
+    })
+
+    if (!response.ok) {
+      const responseText = await response.text()
+      console.error(
+        `[auth] password reset delivery failed (${response.status}) for ${recipientEmail}: ${responseText || "No response body."}`
+      )
+    } else {
+      return {
+        mode: "resend",
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    console.error(
+      `[auth] password reset delivery exception for ${recipientEmail}: ${message}`
+    )
+  }
+
+  console.info(`[auth] password reset email fallback for ${recipientEmail}: ${resetUrl}`)
+  return {
+    mode: "mock",
+    previewUrl: resetUrl,
+  }
+}
+
 async function issueAndSendVerificationForDbUser(
   user: AuthUserRecord
 ): Promise<VerificationEmailDelivery> {
@@ -304,6 +443,43 @@ async function issueAndSendVerificationForMockUser(
   })
 
   return sendEmailVerificationEmail(user.email, buildEmailVerificationUrl(rawToken))
+}
+
+async function issueAndSendPasswordResetForDbUser(
+  user: AuthUserRecord
+): Promise<VerificationEmailDelivery> {
+  const rawToken = generatePasswordResetToken()
+  const hashedToken = hashPasswordResetToken(rawToken)
+  const expiresAt = getPasswordResetExpiryDate()
+
+  await createDbPasswordResetToken(user.id, hashedToken, expiresAt)
+  return sendPasswordResetEmail(user.email, buildPasswordResetUrl(rawToken))
+}
+
+async function issueAndSendPasswordResetForMockUser(
+  user: AuthUserRecord
+): Promise<VerificationEmailDelivery> {
+  const rawToken = generatePasswordResetToken()
+  const hashedToken = hashPasswordResetToken(rawToken)
+  const expiresAt = getPasswordResetExpiryDate().toISOString()
+
+  for (const [key, value] of mockPasswordResetTokensByHash.entries()) {
+    if (value.userId === user.id && value.consumedAt === null) {
+      mockPasswordResetTokensByHash.set(key, {
+        ...value,
+        consumedAt: new Date().toISOString(),
+      })
+    }
+  }
+
+  mockPasswordResetTokensByHash.set(hashedToken, {
+    userId: user.id,
+    tokenHash: hashedToken,
+    expiresAt,
+    consumedAt: null,
+  })
+
+  return sendPasswordResetEmail(user.email, buildPasswordResetUrl(rawToken))
 }
 
 async function ensureDatabaseSuperAdminSeeded(username: string, password: string) {
@@ -650,6 +826,118 @@ export async function resendAuthVerificationEmail(
     mode,
     delivered,
     alreadyVerified: false,
+  }
+}
+
+export async function requestAuthPasswordReset(
+  email: string
+): Promise<{
+  mode: AuthDataMode
+  delivered: VerificationEmailDelivery
+}> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedEmail = normalizeIdentifier(email)
+
+  if (mode === "database") {
+    const user = await findDbUser(normalizedEmail)
+    if (!user) {
+      return {
+        mode,
+        delivered: { mode: "mock" },
+      }
+    }
+
+    const delivered = await issueAndSendPasswordResetForDbUser(user)
+    return {
+      mode,
+      delivered,
+    }
+  }
+
+  const user = mockUsersByEmail.get(normalizedEmail)
+  if (!user) {
+    return {
+      mode,
+      delivered: { mode: "mock" },
+    }
+  }
+
+  const delivered = await issueAndSendPasswordResetForMockUser(user)
+  return {
+    mode,
+    delivered,
+  }
+}
+
+export async function resetAuthPassword(
+  rawToken: string,
+  passwordHash: string
+): Promise<{ mode: AuthDataMode; user: AuthUserRecord }> {
+  const mode = currentMode()
+  await ensureSuperAdminSeeded()
+
+  const normalizedRawToken = rawToken.trim()
+  if (!normalizedRawToken) {
+    throw new InvalidPasswordResetTokenError()
+  }
+
+  const tokenHash = hashPasswordResetToken(normalizedRawToken)
+
+  if (mode === "database") {
+    const token = await consumeDbPasswordResetToken(tokenHash)
+    if (!token) {
+      throw new InvalidPasswordResetTokenError()
+    }
+
+    let user = await updateDbUserPasswordHash(token.userId, passwordHash)
+    if (!user.emailVerifiedAt) {
+      user = await markDbUserEmailVerified(user.id)
+    }
+
+    return {
+      mode,
+      user,
+    }
+  }
+
+  const token = mockPasswordResetTokensByHash.get(tokenHash)
+  if (!token) {
+    throw new InvalidPasswordResetTokenError()
+  }
+
+  if (token.consumedAt) {
+    throw new InvalidPasswordResetTokenError()
+  }
+
+  if (Date.parse(token.expiresAt) <= Date.now()) {
+    throw new InvalidPasswordResetTokenError()
+  }
+
+  mockPasswordResetTokensByHash.set(tokenHash, {
+    ...token,
+    consumedAt: new Date().toISOString(),
+  })
+
+  const user = [...mockUsersByEmail.values()].find(
+    (existing) => existing.id === token.userId
+  )
+
+  if (!user) {
+    throw new InvalidPasswordResetTokenError()
+  }
+
+  user.passwordHash = passwordHash
+  user.emailVerifiedAt = user.emailVerifiedAt ?? new Date().toISOString()
+  mockUsersByEmail.set(user.email, user)
+  if (user.username) {
+    mockUsersByUsername.set(normalizeIdentifier(user.username), user)
+  }
+
+  return {
+    mode,
+    user: cloneUserRecord(user),
   }
 }
 

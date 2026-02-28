@@ -123,6 +123,12 @@ interface ResendVerificationResponse extends ApiErrorResponse {
   ok?: boolean;
 }
 
+interface RequestPasswordResetResponse extends ApiErrorResponse {
+  ok?: boolean;
+  resetEmailMode?: "resend" | "mock";
+  resetPreviewUrl?: string | null;
+}
+
 interface ListCategoriesResponse extends ApiErrorResponse {
   mode?: "database" | "mock";
   categories?: ResourceCategory[];
@@ -963,6 +969,8 @@ export default function Page() {
   const [authPassword, setAuthPassword] = useState("");
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [isRequestingPasswordReset, setIsRequestingPasswordReset] =
+    useState(false);
   const [createCategoryDialogOpen, setCreateCategoryDialogOpen] =
     useState(false);
   const [editCategoryDialogOpen, setEditCategoryDialogOpen] = useState(false);
@@ -1130,6 +1138,9 @@ export default function Page() {
     if (isResendingVerification) {
       return "Resending verification email...";
     }
+    if (isRequestingPasswordReset) {
+      return "Preparing password reset email...";
+    }
     if (isAiPastePreferenceSaving) {
       return "Saving AI paste preference...";
     }
@@ -1155,6 +1166,7 @@ export default function Page() {
     isLoadingMoreResources,
     isPasteFlowInProgress,
     isRefreshingLibrary,
+    isRequestingPasswordReset,
     isResendingVerification,
     isSaving,
     isSavingColorScheme,
@@ -2747,6 +2759,7 @@ export default function Page() {
     setAuthPassword("");
     setIsAuthSubmitting(false);
     setIsResendingVerification(false);
+    setIsRequestingPasswordReset(false);
   }, []);
 
   const handleAuthDialogOpenChange = useCallback(
@@ -2923,6 +2936,58 @@ export default function Page() {
       setIsResendingVerification(false);
     }
   }, [authEmail, isResendingVerification]);
+
+  const handleRequestPasswordReset = useCallback(async () => {
+    if (isRequestingPasswordReset) {
+      return;
+    }
+
+    const email = authEmail.trim().toLowerCase();
+    if (!email) {
+      toast.error("Email required", {
+        description: "Enter your account email first, then request reset.",
+      });
+      return;
+    }
+
+    setIsRequestingPasswordReset(true);
+
+    try {
+      const response = await fetch("/api/auth/request-password-reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
+      const payload = await readJson<RequestPasswordResetResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to request password reset.");
+      }
+
+      if (payload?.resetEmailMode === "mock" && payload.resetPreviewUrl) {
+        toast.success("Reset link generated", {
+          description: `Open this link: ${payload.resetPreviewUrl}`,
+        });
+        return;
+      }
+
+      toast.success("Password reset requested", {
+        description:
+          "If an account exists for this email, reset instructions were sent.",
+      });
+    } catch (error) {
+      toast.error("Password reset failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not request password reset.",
+      });
+    } finally {
+      setIsRequestingPasswordReset(false);
+    }
+  }, [authEmail, isRequestingPasswordReset]);
 
   const handleCreateOrganization = useCallback(async () => {
     if (!canSubmitOrganization) {
@@ -7429,6 +7494,17 @@ export default function Page() {
           <p className="text-center text-xs text-muted-foreground">
             or continue with email and password
           </p>
+          <p className="text-center text-[11px] text-muted-foreground">
+            By continuing, you agree to the{" "}
+            <Link href="/terms" className="underline underline-offset-2">
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="underline underline-offset-2">
+              Privacy Policy
+            </Link>
+            .
+          </p>
 
           <Tabs
             value={authMode}
@@ -7503,17 +7579,30 @@ export default function Page() {
             </Button>
 
             {authMode === "login" ? (
-              <Button
-                type="button"
-                variant="link"
-                className="h-auto justify-start px-0 text-xs"
-                onClick={() => void handleResendVerification()}
-                disabled={isResendingVerification || isAuthSubmitting}
-              >
-                {isResendingVerification
-                  ? "Resending verification..."
-                  : "Resend verification email"}
-              </Button>
+              <div className="flex flex-col items-start gap-1">
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto justify-start px-0 text-xs"
+                  onClick={() => void handleResendVerification()}
+                  disabled={isResendingVerification || isAuthSubmitting}
+                >
+                  {isResendingVerification
+                    ? "Resending verification..."
+                    : "Resend verification email"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto justify-start px-0 text-xs"
+                  onClick={() => void handleRequestPasswordReset()}
+                  disabled={isRequestingPasswordReset || isAuthSubmitting}
+                >
+                  {isRequestingPasswordReset
+                    ? "Preparing reset link..."
+                    : "Forgot password?"}
+                </Button>
+              </div>
             ) : null}
           </form>
         </DialogContent>

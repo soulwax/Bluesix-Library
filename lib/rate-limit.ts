@@ -78,6 +78,16 @@ export const RATE_LIMIT_RULES = {
     max: 6,
     windowMs: 60 * 60 * 1000,
   } satisfies RateLimitRule,
+  AUTH_PASSWORD_RESET_REQUEST: {
+    namespace: "auth:password-reset-request",
+    max: 6,
+    windowMs: 60 * 60 * 1000,
+  } satisfies RateLimitRule,
+  AUTH_PASSWORD_RESET_CONSUME: {
+    namespace: "auth:password-reset-consume",
+    max: 12,
+    windowMs: 60 * 60 * 1000,
+  } satisfies RateLimitRule,
   AUTH_ADMIN_WRITE: {
     namespace: "auth:admin-write",
     max: 30,

@@ -17,14 +17,14 @@ Goal: ship a stable, secure, presentable public MVP of BlueSix for real users.
 - [x] Roll out CSRF protection to all state-changing API routes (completed 2026-02-28)
 - [x] Add endpoint-level rate limiting (auth, AI, write APIs) with Redis-first limiter and in-memory fallback (completed 2026-02-28)
 - [x] Enforce production-safe session/auth configuration and rotation rules (completed 2026-02-28)
-- [ ] Add password reset flow and account recovery UX
+- [x] Add password reset flow and account recovery UX (completed 2026-02-28; `/api/auth/request-password-reset`, `/api/auth/reset-password`, `/reset-password`)
 - [ ] Add account deletion with data export confirmation
-- [ ] Publish Privacy Policy and Terms of Service
+- [x] Publish Privacy Policy and Terms of Service (completed 2026-02-28; `/privacy`, `/terms`)
 - [ ] Run a focused security review of auth, permissions, and input validation
 
 ### Product Reliability
 
-- [ ] Fix migration workflow so deploys do not require manual patching
+- [x] Fix migration workflow so deploys do not require manual patching (completed 2026-02-28; `scripts/reconcile-legacy-migrations.mjs`, `db:migrate` pre-reconcile)
 - [ ] Add robust error handling and typed error responses on all API routes
 - [ ] Complete loading/empty/error UI states for all async flows
 - [ ] Verify role boundaries (viewer/editor/admin/first_admin) end-to-end

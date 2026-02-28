@@ -3,7 +3,11 @@ import "server-only"
 import { and, eq, gt, isNull, sql, type SQL } from "drizzle-orm"
 
 import type { UserRole } from "@/lib/authorization"
-import { appUsers, emailVerificationTokens } from "@/lib/db-schema"
+import {
+  appUsers,
+  emailVerificationTokens,
+  passwordResetTokens,
+} from "@/lib/db-schema"
 import { ensureSchema, getDb } from "@/lib/db"
 
 export interface AuthUserRecord {
@@ -40,6 +44,15 @@ export interface EmailVerificationTokenRecord {
   createdAt: string
 }
 
+export interface PasswordResetTokenRecord {
+  id: string
+  userId: string
+  tokenHash: string
+  expiresAt: string
+  consumedAt: string | null
+  createdAt: string
+}
+
 type AuthUserRow = {
   id: string
   email: string
@@ -51,7 +64,7 @@ type AuthUserRow = {
   emailVerifiedAt: Date | string | null
 }
 
-type EmailVerificationTokenRow = {
+type AuthTokenRow = {
   id: string
   userId: string
   tokenHash: string
@@ -105,7 +118,7 @@ function normalizeRow(row: AuthUserRow): AuthUserRecord {
 }
 
 function normalizeTokenRow(
-  row: EmailVerificationTokenRow
+  row: AuthTokenRow
 ): EmailVerificationTokenRecord {
   return {
     id: row.id,
@@ -425,7 +438,7 @@ export async function createEmailVerificationToken(
     throw new Error("Failed to create email verification token.")
   }
 
-  return normalizeTokenRow(created as EmailVerificationTokenRow)
+  return normalizeTokenRow(created as AuthTokenRow)
 }
 
 export async function consumeEmailVerificationToken(
@@ -483,7 +496,109 @@ export async function consumeEmailVerificationToken(
     return null
   }
 
-  return normalizeTokenRow(consumed as EmailVerificationTokenRow)
+  return normalizeTokenRow(consumed as AuthTokenRow)
+}
+
+export async function createPasswordResetToken(
+  userId: string,
+  tokenHash: string,
+  expiresAt: Date
+): Promise<PasswordResetTokenRecord> {
+  await ensureSchema()
+  const db = getDb()
+
+  await db
+    .update(passwordResetTokens)
+    .set({
+      consumedAt: sql`NOW()`,
+    })
+    .where(
+      and(
+        eq(passwordResetTokens.userId, userId),
+        isNull(passwordResetTokens.consumedAt)
+      )
+    )
+
+  const rows = await db
+    .insert(passwordResetTokens)
+    .values({
+      userId,
+      tokenHash,
+      expiresAt,
+    })
+    .returning({
+      id: passwordResetTokens.id,
+      userId: passwordResetTokens.userId,
+      tokenHash: passwordResetTokens.tokenHash,
+      expiresAt: passwordResetTokens.expiresAt,
+      consumedAt: passwordResetTokens.consumedAt,
+      createdAt: passwordResetTokens.createdAt,
+    })
+
+  const created = rows[0]
+  if (!created) {
+    throw new Error("Failed to create password reset token.")
+  }
+
+  return normalizeTokenRow(created as AuthTokenRow)
+}
+
+export async function consumePasswordResetToken(
+  tokenHash: string
+): Promise<PasswordResetTokenRecord | null> {
+  await ensureSchema()
+  const db = getDb()
+
+  const rows = await db
+    .select({
+      id: passwordResetTokens.id,
+      userId: passwordResetTokens.userId,
+      tokenHash: passwordResetTokens.tokenHash,
+      expiresAt: passwordResetTokens.expiresAt,
+      consumedAt: passwordResetTokens.consumedAt,
+      createdAt: passwordResetTokens.createdAt,
+    })
+    .from(passwordResetTokens)
+    .where(
+      and(
+        eq(passwordResetTokens.tokenHash, tokenHash),
+        isNull(passwordResetTokens.consumedAt),
+        gt(passwordResetTokens.expiresAt, sql`NOW()`)
+      )
+    )
+    .limit(1)
+
+  const token = rows[0]
+  if (!token) {
+    return null
+  }
+
+  const consumedRows = await db
+    .update(passwordResetTokens)
+    .set({
+      consumedAt: sql`NOW()`,
+    })
+    .where(
+      and(
+        eq(passwordResetTokens.id, token.id),
+        isNull(passwordResetTokens.consumedAt)
+      )
+    )
+    .returning({
+      id: passwordResetTokens.id,
+      userId: passwordResetTokens.userId,
+      tokenHash: passwordResetTokens.tokenHash,
+      expiresAt: passwordResetTokens.expiresAt,
+      consumedAt: passwordResetTokens.consumedAt,
+      createdAt: passwordResetTokens.createdAt,
+    })
+
+  const consumed = consumedRows[0]
+  if (!consumed) {
+    return null
+  }
+
+  return normalizeTokenRow(consumed as AuthTokenRow)
 }
 
 export async function markUserAsFirstAdmin(

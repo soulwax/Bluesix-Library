@@ -120,6 +120,13 @@
       "when": 1772171903340,
       "tag": "0016_outgoing_sentry",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1772271275544,
+      "tag": "0017_early_maverick",
+      "breakpoints": true
     }
   ]
 }

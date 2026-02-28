@@ -300,6 +300,31 @@ export const emailVerificationTokens = pgTable(
   ]
 )
 
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => appUsers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "password_reset_tokens_token_hash_length_check",
+      sql`char_length(${table.tokenHash}) = 64`
+    ),
+    index("password_reset_tokens_user_id_idx").on(table.userId),
+    index("password_reset_tokens_expires_at_idx").on(table.expiresAt),
+    uniqueIndex("password_reset_tokens_token_hash_idx").on(table.tokenHash),
+  ]
+)
+
 export const colorSchemePreferences = pgTable(
   "color_scheme_preferences",
   {
