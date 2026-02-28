@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { z } from "zod"
 
 import { auth } from "@/auth"
@@ -22,8 +23,22 @@ const requestSchema = z.object({
   categories: z.array(z.string().trim().min(1).max(80)).max(200).optional(),
 })
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 async function readRequestJson(request: Request): Promise<unknown> {
@@ -93,13 +108,7 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid paste payload.",
-          details: error.flatten(),
-        },
-        { status: 400 }
-      )
+      return errorResponse("Invalid paste payload.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
     }
 
     if (error instanceof MissingPerplexityApiKeyError) {

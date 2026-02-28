@@ -723,11 +723,18 @@ export function asRateLimitJsonResponse(error: unknown): Response | null {
     return null;
   }
 
-  return new Response(JSON.stringify({ error: error.message }), {
-    status: 429,
-    headers: {
-      "Content-Type": "application/json",
-      ...createRateLimitHeaders(error.result),
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: error.message,
+      code: "RATE_LIMITED",
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        ...createRateLimitHeaders(error.result),
+      },
     },
-  });
+  );
 }

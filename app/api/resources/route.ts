@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { z } from "zod"
 
 import { auth } from "@/auth"
@@ -22,8 +23,22 @@ import { parseResourceInput } from "@/lib/resource-validation"
 
 export const runtime = "nodejs"
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 function handleRouteError(error: unknown) {
@@ -37,13 +52,7 @@ function handleRouteError(error: unknown) {
   }
 
   if (error instanceof z.ZodError) {
-    return NextResponse.json(
-      {
-        error: "Invalid request payload.",
-        details: error.flatten(),
-      },
-      { status: 400 }
-    )
+    return errorResponse("Invalid request payload.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
   }
 
   if (error instanceof ResourceNotFoundError) {

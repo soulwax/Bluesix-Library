@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { z } from "zod"
 
 import { auth } from "@/auth"
@@ -12,8 +13,22 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(30).optional(),
 })
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 export async function GET(request: Request) {
@@ -41,13 +56,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ threads })
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid ask-library thread query.",
-          details: error.flatten(),
-        },
-        { status: 400 }
-      )
+      return errorResponse("Invalid ask-library thread query.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
     }
 
     return errorResponse("Unexpected server error.", 500)

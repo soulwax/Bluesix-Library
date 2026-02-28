@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { z } from "zod"
 
 import { requestAuthPasswordReset } from "@/lib/auth-service"
@@ -15,8 +16,22 @@ const requestResetSchema = z.object({
   email: z.string().trim().email().max(320),
 })
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 async function readRequestJson(request: Request): Promise<unknown> {
@@ -68,13 +83,7 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid password reset payload.",
-          details: error.flatten(),
-        },
-        { status: 400 }
-      )
+      return errorResponse("Invalid password reset payload.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
     }
 
     return errorResponse("Unexpected server error.", 500)

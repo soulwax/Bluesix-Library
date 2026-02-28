@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto"
 
 import { NextResponse } from "next/server"
 
+import { createApiErrorResponse } from "@/lib/api-error"
 import { ensureSchema } from "@/lib/db"
 import { listStaleOrMissingHostnames, upsertFaviconCache } from "@/lib/favicon-repository"
 import { resolveFavicon } from "@/lib/favicon-service"
@@ -38,7 +39,10 @@ function isAuthorized(request: Request): boolean {
 
 export async function GET(request: Request) {
   if (!isAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    return createApiErrorResponse({
+      message: "Unauthorized",
+      status: 401,
+    })
   }
 
   try {
@@ -88,9 +92,9 @@ export async function GET(request: Request) {
     })
   } catch (error) {
     console.error("[favicon-refresh] Cron error:", error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Internal error" },
-      { status: 500 },
-    )
+    return createApiErrorResponse({
+      message: error instanceof Error ? error.message : "Internal error",
+      status: 500,
+    })
   }
 }

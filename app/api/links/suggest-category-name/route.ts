@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { z } from "zod"
 
 import { auth } from "@/auth"
@@ -40,8 +41,22 @@ const requestSchema = z.object({
   useAi: z.boolean().optional(),
 })
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 function normalizeWhitespace(value: string): string {
@@ -203,13 +218,7 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid category name suggestion payload.",
-          details: error.flatten(),
-        },
-        { status: 400 }
-      )
+      return errorResponse("Invalid category name suggestion payload.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
     }
 
     return errorResponse(

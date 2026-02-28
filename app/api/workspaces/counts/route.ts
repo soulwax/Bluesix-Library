@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { auth } from "@/auth"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { listResourceWorkspaceCountsService } from "@/lib/resource-service"
 
 export const runtime = "nodejs"
@@ -18,9 +19,9 @@ export async function GET() {
       countsByWorkspace,
     })
   } catch {
-    return NextResponse.json(
-      { error: "Unexpected server error." },
-      { status: 500 },
-    )
+    return createApiErrorResponse({
+      message: "Unexpected server error.",
+      status: 500,
+    })
   }
 }

@@ -1,12 +1,27 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 
 import { auth } from "@/auth";
 import { listResourcesIncludingDeletedService } from "@/lib/resource-service";
 
 export const runtime = "nodejs";
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status });
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 export async function GET() {

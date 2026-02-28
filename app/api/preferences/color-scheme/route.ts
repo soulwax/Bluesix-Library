@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 import { NextResponse } from "next/server"
+import { createApiErrorResponse } from "@/lib/api-error"
 import { cookies } from "next/headers"
 import { z } from "zod"
 
@@ -33,8 +34,22 @@ const updateSchema = z.object({
   colorSchemeId: z.string().trim().min(1).max(64),
 })
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 function readColorSchemeId(value: string): ColorSchemeId | null {
@@ -180,13 +195,7 @@ export async function PUT(request: Request) {
     }
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid color scheme payload.",
-          details: error.flatten(),
-        },
-        { status: 400 }
-      )
+      return errorResponse("Invalid color scheme payload.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
     }
 
     return errorResponse("Unexpected server error.", 500)

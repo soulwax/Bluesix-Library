@@ -6,15 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Standardized API error payloads across all route handlers to a typed contract: `{ ok: false, error, code, details? }`
+- Added shared API error utilities (`lib/api-error.ts`) and migrated route-level validation/error branches to consistent status-code + error-code responses
+- Normalized rate-limit responses to include a stable `RATE_LIMITED` error code while preserving existing retry headers
+
+## [0.2.10] - 2026-02-28
+
 ### Added
 
-- New health endpoints: `GET /api/health/live` (liveness) and `GET /api/health/ready` (readiness with database + rate-limit backend component checks)
+- New password reset recovery flow: `POST /api/auth/request-password-reset`, `POST /api/auth/reset-password`, and `/reset-password`
+- New account lifecycle endpoints: `GET /api/account/export` (JSON export) and `DELETE /api/account/delete` (confirmed deletion)
+- Preferences account-deletion UX requiring data export confirmation plus email/phrase confirmation before destructive action
+- Published legal pages for public launch: `/privacy` and `/terms`
+- New health endpoints: `GET /api/health/live` (liveness) and `GET /api/health/ready` (readiness with database + rate-limit backend checks)
 - Production incident response playbook at `docs/incident-playbook.md`
 - Production release smoke checklist at `docs/production-smoke-test-checklist.md`
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`) enforcing typecheck/build and running tests when present
 
 ### Changed
 
+- `db:migrate` now runs a reconciliation step first (`db:migrate:reconcile`) to avoid manual legacy migration patching
 - Credentials sign-in now resolves accounts by either email or username, matching the login UI label
 - GitHub private-email fallback addresses now include the GitHub user id (`username+github-<id>@github.local`) to reduce collision risk
 - Applied endpoint-level rate limiting across auth mutations, AI endpoints, and state-changing write routes with structured `429` responses and retry headers
@@ -22,15 +35,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Improved Redis rate-limit response parsing and fallback handling to avoid invalid-response crashes
 - Hardened GitHub account-linking flow to avoid linking by reserved fallback-domain emails
 - Registration now rejects reserved `@github.local` addresses so local credentials cannot claim provider-only fallback identifiers
 - CSRF origin validation is now enforced across all state-changing API routes (`POST`, `PUT`, `PATCH`, `DELETE`)
+- Session auth-state refresh now invalidates stale JWT identity when the backing user no longer exists
 
 ### Security
 
 - Added a Redis-backed rate limiting module with per-rule windows, IP/user subject keys, and automatic in-memory fallback when Redis is unavailable
 - Credentials login attempts are now throttled per identifier to reduce brute-force risk
 - Enforced stricter production auth configuration requirements for `NEXTAUTH_URL` (https) and secret strength validation
+- Cron bearer-secret authorization now uses timing-safe comparison
 
 ## [0.2.9] - 2026-02-28
 

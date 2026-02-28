@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse, readRequestJson } from "@/lib/api-error"
 import { z } from "zod"
 
 import { auth } from "@/auth"
@@ -21,8 +22,22 @@ const createOrganizationSchema = z.object({
   name: z.string().trim().min(1).max(80),
 })
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 export async function GET() {
@@ -61,7 +76,7 @@ export async function POST(request: Request) {
       return errorResponse("Admin access required.", 403)
     }
 
-    const payload = (await request.json()) as unknown
+    const payload = await readRequestJson(request)
     const input = createOrganizationSchema.parse(payload)
     const { mode, organization } = await createResourceOrganizationService(input.name)
 

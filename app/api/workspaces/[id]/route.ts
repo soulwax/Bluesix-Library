@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createApiErrorResponse, readRequestJson } from "@/lib/api-error"
 import { z } from "zod"
 
 import { auth } from "@/auth"
@@ -23,8 +24,22 @@ type RouteContext = {
   params: Promise<{ id: string }> | { id: string }
 }
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status })
+function errorResponse(
+  message: string,
+  status: number,
+  options?: {
+    code?: string
+    details?: unknown
+    headers?: HeadersInit
+  },
+) {
+  return createApiErrorResponse({
+    message,
+    status,
+    code: options?.code,
+    details: options?.details,
+    headers: options?.headers,
+  })
 }
 
 async function parseWorkspaceId(context: RouteContext) {
@@ -50,7 +65,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     const workspaceId = await parseWorkspaceId(context)
-    const payload = await request.json() as unknown
+    const payload = await readRequestJson(request)
     const { name } = renameSchema.parse(payload)
 
     const { mode, workspace } = await renameResourceWorkspaceService(
@@ -71,7 +86,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Invalid payload.", details: error.flatten() }, { status: 400 })
+      return errorResponse("Invalid payload.", 400, { code: "VALIDATION_ERROR", details: error.flatten() })
     }
     if (error instanceof ResourceWorkspaceNotFoundError) {
       return errorResponse(error.message, 404)

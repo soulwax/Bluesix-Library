@@ -25,7 +25,7 @@ Goal: ship a stable, secure, presentable public MVP of BlueSix for real users.
 ### Product Reliability
 
 - [x] Fix migration workflow so deploys do not require manual patching (completed 2026-02-28; `scripts/reconcile-legacy-migrations.mjs`, `db:migrate` pre-reconcile)
-- [ ] Add robust error handling and typed error responses on all API routes
+- [x] Add robust error handling and typed error responses on all API routes (completed 2026-02-28; `lib/api-error.ts`, standardized `{ ok: false, error, code, details? }`)
 - [ ] Complete loading/empty/error UI states for all async flows
 - [ ] Verify role boundaries (viewer/editor/admin/first_admin) end-to-end
 - [ ] Add backup and restore procedure (documented and test-run)
