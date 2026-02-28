@@ -2827,6 +2827,11 @@ export default function Page() {
             "Email not verified yet. Check your inbox or resend verification.",
           );
         }
+        if (signInResult.error === "RATE_LIMITED") {
+          throw new Error(
+            "Too many sign-in attempts. Please wait a bit and try again.",
+          );
+        }
 
         throw new Error("Invalid username/email or password.");
       }

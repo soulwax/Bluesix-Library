@@ -8,6 +8,11 @@ import {
   suggestShortCategoryNameFromLinks,
 } from "@/lib/category-name-suggester"
 import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
+import {
   listResourceCategoriesService,
   listResourcesService,
 } from "@/lib/resource-service"
@@ -35,6 +40,11 @@ export async function POST(request: Request, context: RouteContext) {
     if (!session?.user?.id) {
       return errorResponse("Authentication required.", 401)
     }
+
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.AI_REQUESTS, {
+      userId: session.user.id,
+      message: "Category rename suggestion limit reached. Please try again shortly.",
+    })
 
     const categoryId = await parseCategoryId(context)
     const includeAllWorkspaces = session.user.isFirstAdmin === true
@@ -92,6 +102,11 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
+    }
+
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
     }
 
     if (error instanceof z.ZodError) {

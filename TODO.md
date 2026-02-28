@@ -15,7 +15,7 @@ Goal: ship a stable, secure, presentable public MVP of BlueSix for real users.
 ### Security & Trust
 
 - [x] Roll out CSRF protection to all state-changing API routes (completed 2026-02-28)
-- [ ] Add endpoint-level rate limiting (auth, AI, write APIs)
+- [x] Add endpoint-level rate limiting (auth, AI, write APIs) with Redis-first limiter and in-memory fallback (completed 2026-02-28)
 - [ ] Enforce production-safe session/auth configuration and rotation rules
 - [ ] Add password reset flow and account recovery UX
 - [ ] Add account deletion with data export confirmation
@@ -58,7 +58,7 @@ Goal: ship a stable, secure, presentable public MVP of BlueSix for real users.
 ## Current Known Issues / Risks
 
 - [ ] Migration tracking still has manual-recovery paths in some environments
-- [ ] CSRF is not yet consistently enforced on every write endpoint
+- [ ] Redis-backed rate limit fallback currently degrades to per-instance in-memory limits when `REDIS_URL` is unavailable
 - [ ] Scroll-position persistence currently prioritizes desktop main board flow
 - [ ] Browser favicon cache may delay visual favicon updates after deployment
 - [ ] AI-assisted categorization quality needs broader real-world validation

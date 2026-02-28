@@ -6,6 +6,11 @@ import {
   UserNotFoundError,
 } from "@/lib/auth-service"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
+import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -34,6 +39,14 @@ async function readRequestJson(request: Request): Promise<unknown> {
 export async function POST(request: Request) {
   try {
     validateCSRF(request)
+    await assertRequestRateLimit(
+      request,
+      RATE_LIMIT_RULES.AUTH_RESEND_VERIFICATION,
+      {
+        message:
+          "Too many verification resend requests. Please wait before trying again.",
+      },
+    )
 
     const payload = await readRequestJson(request)
     const input = resendSchema.parse(payload)
@@ -49,6 +62,11 @@ export async function POST(request: Request) {
       ok: true,
     })
   } catch (error) {
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
+    }
+
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
     }

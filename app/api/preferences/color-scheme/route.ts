@@ -7,6 +7,11 @@ import { z } from "zod"
 import { auth } from "@/auth"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
 import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
+import {
   findColorSchemePreferenceByUserId,
   findColorSchemePreferenceByVisitorId,
   upsertColorSchemePreferenceForUser,
@@ -125,6 +130,11 @@ async function readRequestJson(request: Request): Promise<unknown> {
 export async function PUT(request: Request) {
   try {
     validateCSRF(request)
+    const session = await auth()
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.WRITE_REQUESTS, {
+      userId: session?.user?.id ?? null,
+      message: "Too many write actions. Please slow down and try again.",
+    })
 
     const payload = await readRequestJson(request)
     const input = updateSchema.parse(payload)
@@ -134,7 +144,6 @@ export async function PUT(request: Request) {
       return errorResponse("Unsupported color scheme.", 400)
     }
 
-    const session = await auth()
     const cookieStore = await cookies()
 
     let visitorIdToSet: string | null = null
@@ -161,6 +170,11 @@ export async function PUT(request: Request) {
 
     return response
   } catch (error) {
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
+    }
+
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
     }

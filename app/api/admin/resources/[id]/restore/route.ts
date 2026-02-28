@@ -3,6 +3,11 @@ import { z } from "zod"
 
 import { auth } from "@/auth"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
+import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
 import { ResourceNotFoundError } from "@/lib/resource-repository"
 import { restoreResourceService } from "@/lib/resource-service"
 import type { ResourceAuditActor } from "@/lib/resources"
@@ -34,6 +39,10 @@ export async function POST(request: Request, context: RouteContext) {
     validateCSRF(request)
 
     const session = await auth()
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.WRITE_REQUESTS, {
+      userId: session?.user?.id ?? null,
+      message: "Too many write actions. Please slow down and try again.",
+    })
     if (!session?.user?.id) {
       return errorResponse("Authentication required.", 401)
     }
@@ -50,6 +59,11 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ mode, resource })
   } catch (error) {
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
+    }
+
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
     }

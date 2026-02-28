@@ -6,6 +6,11 @@ import { appendAskLibraryThreadInteraction } from "@/lib/ask-library-thread-repo
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
 import { hasDatabaseEnv } from "@/lib/env"
 import { askLibraryQuestion } from "@/lib/library-ask"
+import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
 import { listResourcesService } from "@/lib/resource-service"
 
 export const runtime = "nodejs"
@@ -52,6 +57,11 @@ export async function POST(request: Request) {
     validateCSRF(request)
 
     const session = await auth()
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.AI_REQUESTS, {
+      userId: session?.user?.id ?? null,
+      message: "Ask Library request limit reached. Please try again shortly.",
+    })
+
     const payload = await readRequestJson(request)
     const input = requestSchema.parse(payload)
 
@@ -142,6 +152,11 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
+    }
+
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
     }
 
     if (error instanceof z.ZodError) {

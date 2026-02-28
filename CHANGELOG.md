@@ -10,12 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Credentials sign-in now resolves accounts by either email or username, matching the login UI label
 - GitHub private-email fallback addresses now include the GitHub user id (`username+github-<id>@github.local`) to reduce collision risk
+- Applied endpoint-level rate limiting across auth mutations, AI endpoints, and state-changing write routes with structured `429` responses and retry headers
 
 ### Fixed
 
 - Hardened GitHub account-linking flow to avoid linking by reserved fallback-domain emails
 - Registration now rejects reserved `@github.local` addresses so local credentials cannot claim provider-only fallback identifiers
 - CSRF origin validation is now enforced across all state-changing API routes (`POST`, `PUT`, `PATCH`, `DELETE`)
+
+### Security
+
+- Added a Redis-backed rate limiting module with per-rule windows, IP/user subject keys, and automatic in-memory fallback when Redis is unavailable
+- Credentials login attempts are now throttled per identifier to reduce brute-force risk
 
 ## [0.2.9] - 2026-02-28
 

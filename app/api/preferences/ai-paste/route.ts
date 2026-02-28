@@ -4,6 +4,11 @@ import { z } from "zod"
 import { auth } from "@/auth"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
 import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
+import {
   findAiPastePreferenceByUserId,
   upsertAiPastePreferenceForUser,
 } from "@/lib/ai-paste-preference-repository"
@@ -51,6 +56,10 @@ export async function PUT(request: Request) {
     validateCSRF(request)
 
     const session = await auth()
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.WRITE_REQUESTS, {
+      userId: session?.user?.id ?? null,
+      message: "Too many write actions. Please slow down and try again.",
+    })
     if (!session?.user?.id) {
       return errorResponse("Authentication required.", 401)
     }
@@ -65,6 +74,11 @@ export async function PUT(request: Request) {
 
     return NextResponse.json({ ok: true, decision: preference.decision })
   } catch (error) {
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
+    }
+
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
     }

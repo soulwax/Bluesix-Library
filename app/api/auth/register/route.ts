@@ -4,6 +4,11 @@ import { z } from "zod"
 import { registerAuthUser, UserAlreadyExistsError } from "@/lib/auth-service"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
 import { hashPassword, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/lib/password"
+import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 const GITHUB_FALLBACK_EMAIL_DOMAIN = "github.local"
@@ -48,6 +53,13 @@ async function readRequestJson(request: Request): Promise<unknown> {
 export async function POST(request: Request) {
   try {
     validateCSRF(request)
+    await assertRequestRateLimit(
+      request,
+      RATE_LIMIT_RULES.AUTH_REGISTER,
+      {
+        message: "Too many registration attempts. Please try again later.",
+      },
+    )
 
     const payload = await readRequestJson(request)
     const input = registerSchema.parse(payload)
@@ -72,6 +84,11 @@ export async function POST(request: Request) {
       { status: 201 }
     )
   } catch (error) {
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
+    }
+
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
     }

@@ -5,6 +5,11 @@ import { auth } from "@/auth"
 import { canCreateResources, deriveUserRole } from "@/lib/authorization"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
 import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
+import {
   MissingPerplexityApiKeyError,
   suggestLinkDetailsFromUrl,
 } from "@/lib/link-paste-suggester"
@@ -40,6 +45,10 @@ export async function POST(request: Request) {
     validateCSRF(request)
 
     const session = await auth()
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.AI_REQUESTS, {
+      userId: session?.user?.id ?? null,
+      message: "AI request rate limit reached. Please wait and try again.",
+    })
     if (!session?.user?.id) {
       return errorResponse("Authentication required.", 401)
     }
@@ -74,6 +83,11 @@ export async function POST(request: Request) {
       model: suggestion.model,
     })
   } catch (error) {
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
+    }
+
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
     }

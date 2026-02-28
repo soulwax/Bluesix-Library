@@ -20,6 +20,11 @@ import {
   PASSWORD_MIN_LENGTH,
   verifyPassword,
 } from "@/lib/password";
+import {
+  assertRateLimit,
+  RATE_LIMIT_RULES,
+  RateLimitExceededError,
+} from "@/lib/rate-limit";
 
 const credentialsSchema = z.object({
   email: z.string().trim().min(1).max(320),
@@ -155,6 +160,19 @@ export const authOptions: NextAuthOptions = {
 
         const identifier = parsed.data.email.trim().toLowerCase();
         const password = parsed.data.password;
+
+        try {
+          await assertRateLimit(
+            `credentials-signin:${identifier}`,
+            RATE_LIMIT_RULES.AUTH_CREDENTIALS_SIGNIN_IDENTIFIER,
+            "Too many sign-in attempts. Please wait and try again.",
+          );
+        } catch (error) {
+          if (error instanceof RateLimitExceededError) {
+            throw new Error("RATE_LIMITED");
+          }
+          throw error;
+        }
 
         if (isConfiguredSuperAdminCredentials(identifier, password)) {
           const { user } = await ensureAuthUserForSignIn(identifier, {

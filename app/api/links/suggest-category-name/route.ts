@@ -5,6 +5,11 @@ import { auth } from "@/auth"
 import { canCreateResources, deriveUserRole } from "@/lib/authorization"
 import { suggestShortCategoryNameFromLinks } from "@/lib/category-name-suggester"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
+import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -142,6 +147,11 @@ export async function POST(request: Request) {
       return errorResponse("Insufficient permissions for category name suggestion.", 403)
     }
 
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.AI_REQUESTS, {
+      userId: session.user.id,
+      message: "Category name suggestion limit reached. Please try again shortly.",
+    })
+
     const payload = await readRequestJson(request)
     const input = requestSchema.parse(payload)
     const fallbackName = buildFallbackCategoryName(input.currentName, input.links)
@@ -185,6 +195,11 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
+    }
+
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
     }
 
     if (error instanceof z.ZodError) {

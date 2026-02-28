@@ -5,6 +5,11 @@ import { auth } from "@/auth"
 import { canCreateResources, deriveUserRole } from "@/lib/authorization"
 import { summarizeAiInboxBatch } from "@/lib/ai-inbox-summarizer"
 import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
+import {
+  asRateLimitJsonResponse,
+  assertRequestRateLimit,
+  RATE_LIMIT_RULES,
+} from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -64,6 +69,11 @@ export async function POST(request: Request) {
       return errorResponse("Insufficient permissions for AI inbox summary.", 403)
     }
 
+    await assertRequestRateLimit(request, RATE_LIMIT_RULES.AI_REQUESTS, {
+      userId: session.user.id,
+      message: "AI inbox summary request limit reached. Please try again shortly.",
+    })
+
     const payload = await readRequestJson(request)
     const input = requestSchema.parse(payload)
     const summary = await summarizeAiInboxBatch({
@@ -78,6 +88,11 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof CSRFValidationError) {
       return errorResponse("Invalid request origin.", 403)
+    }
+
+    const rateLimited = asRateLimitJsonResponse(error)
+    if (rateLimited) {
+      return rateLimited
     }
 
     if (error instanceof z.ZodError) {
