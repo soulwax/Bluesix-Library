@@ -55,6 +55,48 @@ Goal: ship a stable, secure, presentable public MVP of BlueSix for real users.
 - [ ] Public marketing page + product screenshots/demo
 - [ ] Expanded docs (user guide + admin runbook)
 
+## P2: "No Company Says No" Feature Set
+
+### Enterprise Security & Compliance
+
+- [ ] SSO (SAML/OIDC) with SCIM provisioning/deprovisioning
+- [ ] Granular RBAC with custom roles and policy templates
+- [ ] Immutable audit logs with export and retention controls
+- [ ] IP allowlists and session/device management controls
+- [ ] Compliance pack: SOC 2 readiness checklist, DPA template, data residency options
+
+### Platform & Integrations
+
+- [ ] Public API with scoped service tokens and usage quotas
+- [ ] Webhooks for resource/category/workspace lifecycle events
+- [ ] Native Slack + Microsoft Teams integrations (link push, digest, alerts)
+- [ ] Google Drive/Notion/Confluence import connectors
+- [ ] Zapier/Make integration templates and quick-start recipes
+
+### Collaboration & Workflow
+
+- [ ] Real-time collaborative editing/presence for shared workspaces
+- [ ] Comment threads, mentions, and approval workflows on resources
+- [ ] Saved views and shared filters per team/workspace
+- [ ] Scheduled digests (daily/weekly) with team-specific highlights
+- [ ] Workspace templates and one-click onboarding kits by use case
+
+### Intelligence & Automation
+
+- [ ] AI-powered auto-tagging/categorization with confidence + human override
+- [ ] Duplicate detection with merge suggestions across organizations
+- [ ] Semantic search + "ask across company knowledge" with citations
+- [ ] Rules engine ("if URL contains X, tag Y and route to workspace Z")
+- [ ] Agentic inbox triage mode for large-batch processing
+
+### Revenue & GTM Levers
+
+- [ ] Self-serve billing (Stripe), seat management, and usage-based add-ons
+- [ ] Admin analytics dashboard: adoption, active teams, ROI signals
+- [ ] White-label branding (logo/colors/custom domain) for enterprise plans
+- [ ] In-product referrals/invitations with viral sharing loops
+- [ ] Public status page and trust center for sales/enterprise procurement
+
 ## Current Known Issues / Risks
 
 - [ ] Migration tracking still has manual-recovery paths in some environments

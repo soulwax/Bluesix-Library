@@ -5,7 +5,11 @@ import net from "node:net"
 import tls from "node:tls"
 
 const REDIS_SOCKET_TIMEOUT_MS = 2500
+
 const RATE_LIMIT_KEY_PREFIX = "ratelimit"
+
+// Minimum TTL for Redis rate limit keys (10 seconds) to avoid premature expiration
+const REDIS_MIN_TTL_MS = 10_000
 
 type RedisReply = string | number | null | RedisReply[]
 
@@ -90,6 +94,27 @@ export const RATE_LIMIT_RULES = {
 } as const
 
 const memoryBuckets = new Map<string, MemoryBucket>()
+
+const MEMORY_BUCKET_CLEANUP_INTERVAL_MS = 60 * 1000
+
+function cleanupExpiredMemoryBuckets(now: number = Date.now()): void {
+  for (const [key, bucket] of memoryBuckets) {
+    if (bucket.resetAt <= now) {
+      memoryBuckets.delete(key)
+    }
+  }
+}
+
+if (typeof setInterval === "function") {
+  const timer = setInterval(
+    () => {
+      cleanupExpiredMemoryBuckets()
+    },
+    MEMORY_BUCKET_CLEANUP_INTERVAL_MS
+  )
+  // In Node.js, unref the interval so it doesn't keep the process alive.
+  ;(timer as NodeJS.Timeout).unref?.()
+}
 let hasLoggedRedisFallback = false
 let hasLoggedRedisTlsFallback = false
 
@@ -199,7 +224,11 @@ function parseRedisReply(
         return null
       }
 
-      if (typeof parsed.value === "object" && parsed.value?.name === "RedisResponseError") {
+      if (
+        parsed.value !== null &&
+        typeof parsed.value === "object" &&
+        parsed.value.name === "RedisResponseError"
+      ) {
         return {
           value: parsed.value,
           nextOffset: parsed.nextOffset,
@@ -307,7 +336,8 @@ async function executeRedisCommands(
           const parsed = parseRedisReply(buffer)
           if (!parsed) {
             break
-          }
+          if (
+            parsed.value !== null &&
 
           buffer = buffer.subarray(parsed.nextOffset)
 
@@ -406,7 +436,7 @@ async function consumeRedisRateLimit(
   }
 
   const key = buildRateLimitKey(rule, subject, now)
-  const ttlMs = Math.max(rule.windowMs * 2, 10_000)
+  const ttlMs = Math.max(rule.windowMs * 2, REDIS_MIN_TTL_MS)
 
   const commands: string[][] = []
   if (config.password) {
