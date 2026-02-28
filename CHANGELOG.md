@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-02-28
+
+### Added
+
+- New CSRF protection utility (`lib/csrf-protection.ts`) with Origin/Referer validation for state-changing requests
+- Database index on `app_users.created_at` for improved user management query performance
+- Database index on `resource_cards (workspace_id, category_id, deleted_at)` for optimized category filtering with soft deletes
+- Database index on `resource_cards.deleted_at` for faster archive queries
+- Database index on `resource_links (lower(url))` for efficient URL duplicate detection
+- Migration script (`scripts/apply-indexes.mjs`) for manually applying database indexes
+
+### Changed
+
+- Auth secret configuration now properly validates `NEXTAUTH_SECRET` or `AUTH_SECRET` with secure fallback behavior
+- Auth secret only allows insecure dev fallback in development mode; throws error in production if not configured
+- Category rebalancing now uses batched SQL updates (single query) instead of N individual updates, eliminating N+1 query pattern
+- CSRF protection applied to `/api/items/move` endpoint as reference implementation
+
+### Fixed
+
+- **CRITICAL SECURITY**: Removed dangerous auth secret fallback chain that used `DATABASE_URL` as JWT signing secret
+- Performance bottleneck in `rebalanceCategoryOrders()` that executed separate UPDATE query for each resource card
+
+### Security
+
+- Auth secret validation now enforces proper cryptographic secrets in production environments
+- CSRF protection framework ready for deployment across all state-changing API endpoints
+- Removed database URL exposure risk in JWT token generation
+
 ## [0.2.7] - 2026-02-22
 
 ### Changed

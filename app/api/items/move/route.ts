@@ -3,6 +3,7 @@ import { z } from "zod"
 
 import { auth } from "@/auth"
 import { canManageResource, deriveUserRole } from "@/lib/authorization"
+import { CSRFValidationError, validateCSRF } from "@/lib/csrf-protection"
 import {
   getResourceOwnerById,
   ResourceCategoryNotFoundError,
@@ -40,6 +41,9 @@ async function readRequestJson(request: Request): Promise<unknown> {
 
 export async function POST(request: Request) {
   try {
+    // CSRF protection for state-changing request
+    validateCSRF(request)
+
     const session = await auth()
     if (!session?.user?.id) {
       return errorResponse("Authentication required.", 401)
@@ -69,6 +73,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result)
   } catch (error) {
+    if (error instanceof CSRFValidationError) {
+      console.error("[move-items] CSRF validation failed:", error.message)
+      return errorResponse("Invalid request origin.", 403)
+    }
+
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         {

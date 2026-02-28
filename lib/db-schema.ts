@@ -55,6 +55,14 @@ export const resourceCards = pgTable(
     index("resource_cards_workspace_id_active_idx")
       .on(table.workspaceId)
       .where(sql`${table.deletedAt} IS NULL`),
+    // Composite index for category filtering with soft delete checks
+    index("resource_cards_workspace_category_deleted_idx").on(
+      table.workspaceId,
+      table.categoryId,
+      table.deletedAt
+    ),
+    // Index for archive queries and soft delete filtering
+    index("resource_cards_deleted_at_idx").on(table.deletedAt),
   ]
 )
 
@@ -183,6 +191,8 @@ export const resourceLinks = pgTable(
       table.resourceId,
       table.position
     ),
+    // Index for URL duplicate detection and lookups
+    index("resource_links_url_idx").on(sql`lower(${table.url})`),
   ]
 )
 
@@ -260,6 +270,8 @@ export const appUsers = pgTable(
     uniqueIndex("app_users_single_first_admin_idx")
       .on(table.isFirstAdmin)
       .where(sql`${table.isFirstAdmin} = true`),
+    // Index for user management queries (sorting by registration date)
+    index("app_users_created_at_idx").on(table.createdAt),
   ]
 )
 

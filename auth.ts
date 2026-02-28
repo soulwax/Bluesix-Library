@@ -26,21 +26,45 @@ const credentialsSchema = z.object({
   password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 });
 
-const authSecret =
-  process.env.NEXTAUTH_SECRET ??
-  process.env.AUTH_SECRET ??
-  process.env.DATABASE_URL_UNPOOLED ??
-  process.env.DATABASE_URL ??
-  "dev-only-insecure-secret";
+/**
+ * Get NextAuth secret with proper security checks.
+ * In production, NEXTAUTH_SECRET or AUTH_SECRET MUST be set.
+ * In development, falls back to a dev-only secret for convenience.
+ */
+function getAuthSecret(): string {
+  const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
 
+  if (secret) {
+    return secret;
+  }
+
+  // Only allow fallback in development mode
+  const isDevelopment = process.env.NODE_ENV !== "production";
+
+  if (!isDevelopment) {
+    throw new Error(
+      "NEXTAUTH_SECRET or AUTH_SECRET environment variable must be set in production. " +
+      "Generate a secure secret with: openssl rand -base64 32"
+    );
+  }
+
+  console.warn(
+    "[auth] WARNING: Using insecure development secret. " +
+    "Set NEXTAUTH_SECRET in production. Generate with: openssl rand -base64 32"
+  );
+
+  return "dev-only-insecure-secret-change-in-production";
+}
+
+const authSecret = getAuthSecret();
 const githubClientId = process.env.GITHUB_CLIENT_ID?.trim();
 const githubClientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
+
 // Maximum age before we re-fetch/refresh auth-related state (e.g. role/admin flags)
 // for a token-backed session. Five minutes is a compromise between:
 // - keeping authorization decisions reasonably fresh (shorter TTL = less staleness)
 // - avoiding excessive database / auth-service load (longer TTL = fewer refreshes).
 // Adjusting this value affects that tradeoff and should be done with care.
-
 const TOKEN_AUTH_STATE_REFRESH_TTL_MS = 5 * 60 * 1000;
 
 /**
@@ -59,7 +83,7 @@ function isAuthStateComplete(token: JWT): boolean {
 }
 
 export const authOptions: NextAuthOptions = {
-  secret: authSecret ?? "dev-only-insecure-secret",
+  secret: authSecret,
   session: {
     strategy: "jwt",
   },

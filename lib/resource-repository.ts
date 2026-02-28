@@ -555,6 +555,9 @@ async function rebalanceCategoryOrders(
   }
 
   const updates: MoveResourceItemPatch[] = [];
+  const idsToUpdate: string[] = [];
+  const orderMap = new Map<string, number>();
+
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const nextOrder = (index + 1) * RESOURCE_ORDER_STEP;
@@ -562,20 +565,32 @@ async function rebalanceCategoryOrders(
       continue;
     }
 
-    await dbClient
-      .update(resourceCards)
-      .set({
-        sortOrder: nextOrder,
-        updatedAt: sql`NOW()`,
-      })
-      .where(eq(resourceCards.id, row.id));
-
+    idsToUpdate.push(row.id);
+    orderMap.set(row.id, nextOrder);
     updates.push({
       id: row.id,
       categoryId,
       category: row.category,
       order: nextOrder,
     });
+  }
+
+  // Batch update all rows in a single query using CASE statement
+  if (idsToUpdate.length > 0) {
+    const whenClauses = idsToUpdate.map((id) => {
+      const order = orderMap.get(id)!;
+      return sql`WHEN ${id} THEN ${order}`;
+    });
+
+    await dbClient.execute(sql`
+      UPDATE resource_cards
+      SET sort_order = (CASE id ${sql.join(whenClauses, sql` `)} END),
+          updated_at = NOW()
+      WHERE id IN (${sql.join(
+        idsToUpdate.map((id) => sql`${id}`),
+        sql`, `,
+      )})
+    `);
   }
 
   return updates;

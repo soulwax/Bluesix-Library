@@ -21,6 +21,14 @@ export const metadata: Metadata = {
   title: "Bluesix - Resource Library",
   description:
     "Personal dashboard to browse, organize, and access your developer resources without tab chaos.",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icon.ico", sizes: "any" },
+    ],
+    shortcut: ["/favicon.svg"],
+    apple: [{ url: "/icon.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export const viewport: Viewport = {

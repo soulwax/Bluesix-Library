@@ -113,6 +113,13 @@
       "when": 1772141262211,
       "tag": "0015_lonely_radioactive_man",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1772171903340,
+      "tag": "0016_outgoing_sentry",
+      "breakpoints": true
     }
   ]
 }
