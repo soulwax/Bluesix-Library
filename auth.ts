@@ -25,6 +25,7 @@ const credentialsSchema = z.object({
   email: z.string().trim().min(1).max(320),
   password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 });
+const GITHUB_FALLBACK_EMAIL_DOMAIN = "github.local";
 
 /**
  * Get NextAuth secret with proper security checks.
@@ -104,7 +105,9 @@ export const authOptions: NextAuthOptions = {
               return {
                 id: profile.id.toString(),
                 name: profile.name ?? profile.login,
-                email: profile.email || `${profile.login}@github.local`, // Fallback if email private
+                email:
+                  profile.email ||
+                  `${profile.login}+github-${profile.id}@${GITHUB_FALLBACK_EMAIL_DOMAIN}`, // Fallback if email private
                 username: profile.login, // Capture GitHub username
                 image: profile.avatar_url,
               };
@@ -150,19 +153,25 @@ export const authOptions: NextAuthOptions = {
           };
         }
 
-        const { user } = await findAuthUserByEmail(identifier);
-        if (!user?.passwordHash) {
+        const { user: userByEmail } = await findAuthUserByEmail(identifier);
+        const credentialUser =
+          userByEmail ??
+          (await findAuthUserByUsername(identifier)).user;
+        if (!credentialUser?.passwordHash) {
           return null;
         }
 
-        const validPassword = await verifyPassword(password, user.passwordHash);
+        const validPassword = await verifyPassword(
+          password,
+          credentialUser.passwordHash,
+        );
         if (!validPassword) {
           return null;
         }
 
         try {
           const { user: syncedUser } = await ensureAuthUserForSignIn(
-            identifier,
+            credentialUser.email,
             {
               allowCreate: false,
               requireVerifiedEmail: true,
@@ -204,7 +213,15 @@ export const authOptions: NextAuthOptions = {
         if (isGitHubSignIn && user.username) {
           // GitHub OAuth: use username as primary identifier
           const username = user.username.trim().toLowerCase();
-          const email = user.email?.trim().toLowerCase() || `${username}@github.local`;
+          const fallbackEmail = `${username}+github-${
+            typeof user.id === "string" && user.id.trim().length > 0
+              ? user.id
+              : "unknown"
+          }@${GITHUB_FALLBACK_EMAIL_DOMAIN}`;
+          const email = user.email?.trim().toLowerCase() || fallbackEmail;
+          const canLinkByEmail = !email.endsWith(
+            `@${GITHUB_FALLBACK_EMAIL_DOMAIN}`,
+          );
 
           // Check if user exists by username first
           const { user: existingByUsername } = await findAuthUserByUsername(username);
@@ -216,21 +233,32 @@ export const authOptions: NextAuthOptions = {
             // Check if user exists by email (to link existing accounts)
             const { user: existingByEmail } = await findAuthUserByEmail(email);
 
-            if (existingByEmail && !existingByEmail.username) {
-              // Found existing account by email without username - link it
-              const { updateAuthUserUsername } = await import("@/lib/auth-service");
-              const { user: updatedUser } = await updateAuthUserUsername(
-                existingByEmail.id,
-                username
-              );
-              syncedUser = updatedUser;
+            if (existingByEmail && canLinkByEmail) {
+              if (!existingByEmail.username) {
+                // Found existing account by email without username - link it
+                const { updateAuthUserUsername } = await import("@/lib/auth-service");
+                const { user: updatedUser } = await updateAuthUserUsername(
+                  existingByEmail.id,
+                  username,
+                );
+                syncedUser = updatedUser;
+              } else if (existingByEmail.username === username) {
+                syncedUser = existingByEmail;
+              } else {
+                console.error("[auth] github sign-in email conflict", {
+                  email,
+                  githubUsername: username,
+                  existingUsername: existingByEmail.username,
+                });
+                return false;
+              }
             } else {
               // Create new user with username
               const { user: newUser } = await ensureAuthUserByUsername(
                 username,
                 email,
                 null,
-                { emailVerifiedAt: new Date() }
+                { emailVerifiedAt: new Date() },
               );
               syncedUser = newUser;
             }

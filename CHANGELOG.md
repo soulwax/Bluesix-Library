@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Credentials sign-in now resolves accounts by either email or username, matching the login UI label
+- GitHub private-email fallback addresses now include the GitHub user id (`username+github-<id>@github.local`) to reduce collision risk
+
+### Fixed
+
+- Hardened GitHub account-linking flow to avoid linking by reserved fallback-domain emails
+- Registration now rejects reserved `@github.local` addresses so local credentials cannot claim provider-only fallback identifiers
+
 ## [0.2.9] - 2026-02-28
 
 ### Added

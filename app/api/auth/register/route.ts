@@ -5,9 +5,24 @@ import { registerAuthUser, UserAlreadyExistsError } from "@/lib/auth-service"
 import { hashPassword, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/lib/password"
 
 export const runtime = "nodejs"
+const GITHUB_FALLBACK_EMAIL_DOMAIN = "github.local"
 
 const registerSchema = z.object({
-  email: z.string().trim().email().max(320),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .max(320)
+    .refine(
+      (value) =>
+        !value
+          .toLowerCase()
+          .endsWith(`@${GITHUB_FALLBACK_EMAIL_DOMAIN}`),
+      {
+        message:
+          "Email addresses using reserved authentication domains are not allowed.",
+      },
+    ),
   password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 })
 

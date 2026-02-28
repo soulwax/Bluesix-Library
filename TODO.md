@@ -4,7 +4,7 @@ Goal: ship a stable, secure, presentable public MVP of BlueSix for real users.
 
 ## MVP Scope (What "Public MVP" Includes)
 
-- [ ] Authentication (email/password) with verification, login, logout
+- [x] Authentication (email/password) with verification, login, logout (reviewed and hardened on 2026-02-28)
 - [ ] Organization > workspace > category > resource flows
 - [ ] CRUD for resources, categories, workspaces, organizations (role-restricted)
 - [ ] Search, pagination/load-more, and responsive desktop/mobile usage
