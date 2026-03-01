@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "check": "npm run lint && npm run build",
+    "check": "pnpm lint && pnpm build",
     "db:generate": "drizzle-kit generate",
     "db:migrate:reconcile": "node scripts/reconcile-legacy-migrations.mjs",
     "db:migrate": "pnpm db:migrate:reconcile && drizzle-kit migrate",
@@ -22,10 +22,10 @@
     "db:studio": "drizzle-kit studio",
     "electron:compile": "tsc --project tsconfig.electron.json",
     "electron:dev": "concurrently --kill-others-on-fail \"pnpm dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder",
-    "electron:build:mac": "BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder --mac",
-    "electron:build:win": "BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder --win",
-    "electron:build:linux": "BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder --linux"
+    "electron:build": "cross-env BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder",
+    "electron:build:mac": "cross-env BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder --mac",
+    "electron:build:win": "cross-env BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder --win",
+    "electron:build:linux": "cross-env BUILD_TARGET=electron next build && pnpm electron:compile && electron-builder --linux"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -91,6 +91,7 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "concurrently": "^9.1.2",
+    "cross-env": "^10.1.0",
     "dotenv": "^17.3.1",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
